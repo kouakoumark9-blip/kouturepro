@@ -11,7 +11,8 @@
     "test:auth": "node tests/auth.e2e.mjs",
     "demo:db": "node scripts/create-demo-db.mjs",
     "test:postgres": "node --test tests/postgres.test.js",
-    "verify:blob": "node scripts/verify-blob.mjs"
+    "verify:blob": "node scripts/verify-blob.mjs",
+    "db:sql": "node scripts/generer-sql-neon.mjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

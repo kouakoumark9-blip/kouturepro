@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import schema from './schema.js';
+import schema, { postgresMigrations } from './schema.js';
 
 export const hostedDb = process.env.VERCEL === '1' || process.env.USE_POSTGRES === '1';
 const production = process.env.NODE_ENV === 'production';
@@ -88,11 +88,7 @@ if (hostedDb) {
     db.exec('SELECT pg_advisory_xact_lock(7489201)');
     db.exec('CREATE SCHEMA IF NOT EXISTS kouturepro');
     db.exec(schema);
-    db.exec('ALTER TABLE measurements ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1');
-    db.exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT');
-    db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT ''");
-    db.exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1');
-    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users(email)');
+    for (const statement of postgresMigrations) db.exec(statement);
   })();
 } else db.exec(schema);
 

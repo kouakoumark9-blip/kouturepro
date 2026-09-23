@@ -1,5 +1,14 @@
-// Shared SQL schema for local SQLite and hosted PostgreSQL.
-export default `
+-- KouturePro : initialisation du schéma PostgreSQL dans une base Neon EXISTANTE.
+-- À exécuter dans l'éditeur SQL Neon de la bonne branche/base (Production ou Preview).
+-- N'exécutez pas ce script dans une autre application par erreur. Sauvegardez une
+-- base ayant déjà des données avant toute migration. Ne crée AUCUN compte fictif.
+-- Les tables d'authentification Neon restent intactes dans leur propre schéma.
+-- Idempotent pour un schéma KouturePro créé avec cette version.
+-- Généré automatiquement depuis server/schema.js par npm run db:sql.
+BEGIN;
+SELECT pg_advisory_xact_lock(7489201);
+CREATE SCHEMA IF NOT EXISTS kouturepro;
+SET LOCAL search_path TO kouturepro, public;
 CREATE TABLE IF NOT EXISTS organizations (
  id TEXT PRIMARY KEY, slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT '',
  address TEXT DEFAULT '', city TEXT DEFAULT '', neighborhood TEXT DEFAULT '', whatsapp_phone TEXT DEFAULT '',
@@ -103,14 +112,15 @@ CREATE INDEX IF NOT EXISTS ix_clients_org ON clients(org_id);
 CREATE INDEX IF NOT EXISTS ix_orders_org_due ON orders(org_id,due_date);
 CREATE INDEX IF NOT EXISTS ix_payments_org ON payments(org_id);
 CREATE INDEX IF NOT EXISTS ix_measures_client ON measurements(client_id);
-`;
+ALTER TABLE measurements ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
+CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users(email);
+COMMIT;
 
-// Safe upgrades shared by the app's cold-start migration and the Neon SQL
-// Editor bootstrap script. Never reset an existing production table.
-export const postgresMigrations = Object.freeze([
-  'ALTER TABLE measurements ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1',
-  'ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT',
-  "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT ''",
-  'ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1',
-  'CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users(email)',
-]);
+-- Contrôle sans modification : 21 tables attendues, aucune donnée fictive importée.
+SELECT current_database() AS base, COUNT(*) AS tables_kouturepro
+  FROM information_schema.tables
+  WHERE table_schema = 'kouturepro' AND table_type = 'BASE TABLE';
+SELECT COUNT(*) AS ateliers_deja_presents FROM kouturepro.organizations;

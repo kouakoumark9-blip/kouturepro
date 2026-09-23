@@ -1,28 +1,54 @@
 import 'dotenv/config';
-import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import schema from './schema.js';
 
+export const hostedDb = process.env.VERCEL === '1' || process.env.USE_POSTGRES === '1';
+const production = process.env.NODE_ENV === 'production';
 const dataDir = path.resolve(process.env.DATA_DIR || 'data');
-fs.mkdirSync(dataDir, { recursive: true });
-const secretPath = path.join(dataDir, 'local-secrets.json');
-let localSecrets = {};
-try { localSecrets = JSON.parse(fs.readFileSync(secretPath, 'utf8')); } catch {}
-if (!localSecrets.encryptionKey || !localSecrets.sessionKey) {
-  localSecrets = { encryptionKey: crypto.randomBytes(32).toString('hex'), sessionKey: crypto.randomBytes(32).toString('hex') };
-  fs.writeFileSync(secretPath, JSON.stringify(localSecrets), { mode: 0o600 });
+const postgresUrl = process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL_NON_POOLING || process.env.DATABASE_URL || process.env.POSTGRES_URL;
+if (hostedDb && !postgresUrl) {
+  throw new Error('Connectez PostgreSQL au projet Vercel : DATABASE_URL_UNPOOLED est absent.');
 }
-if (process.env.NODE_ENV === 'production' && (!process.env.APP_ENCRYPTION_KEY || !process.env.SESSION_SECRET)) {
+if (hostedDb && /-pooler\./i.test(new URL(postgresUrl).hostname)) {
+  throw new Error('Utilisez DATABASE_URL_UNPOOLED (connexion directe Neon) pour les transactions.');
+}
+// A self-hosted SQLite service must not quietly fall back to an ephemeral disk.
+if (!hostedDb && process.env.REQUIRE_MOUNTED_DATA_DIR === '1') {
+  if (!process.env.DATA_DIR || !path.isAbsolute(process.env.DATA_DIR)) {
+    throw new Error('DATA_DIR doit être le chemin absolu du disque persistant.');
+  }
+  const mountinfo = fs.readFileSync('/proc/self/mountinfo', 'utf8');
+  const isMounted = mountinfo.split('\n').some(line => line.split(' - ')[0].split(' ')[4] === dataDir);
+  if (!isMounted) throw new Error(`Disque persistant absent : ${dataDir}. Refus de créer une base temporaire.`);
+}
+if (!hostedDb || !production) fs.mkdirSync(dataDir, { recursive: true });
+if (production && (!process.env.APP_ENCRYPTION_KEY || !process.env.SESSION_SECRET)) {
   throw new Error('En production, APP_ENCRYPTION_KEY et SESSION_SECRET sont obligatoires.');
 }
-const encryptionKey = crypto.createHash('sha256').update(process.env.APP_ENCRYPTION_KEY || localSecrets.encryptionKey).digest();
-export const sessionKey = process.env.SESSION_SECRET || localSecrets.sessionKey;
-export const db = new Database(path.join(dataDir, 'kouturepro.sqlite'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-db.pragma('busy_timeout = 5000');
+// Development secrets belong to the local data directory. Production never
+// generates fallback secrets: the host supplies stable, separately backed-up keys.
+let localSecrets = {};
+if (!production) {
+  const secretPath = path.join(dataDir, 'local-secrets.json');
+  try { localSecrets = JSON.parse(fs.readFileSync(secretPath, 'utf8')); } catch {}
+  if (!localSecrets.encryptionKey || !localSecrets.sessionKey) {
+    localSecrets = { encryptionKey: crypto.randomBytes(32).toString('hex'), sessionKey: crypto.randomBytes(32).toString('hex') };
+    fs.writeFileSync(secretPath, JSON.stringify(localSecrets), { mode: 0o600 });
+  }
+}
+const encryptionKey = crypto.createHash('sha256').update(production ? process.env.APP_ENCRYPTION_KEY : process.env.APP_ENCRYPTION_KEY || localSecrets.encryptionKey).digest();
+export const sessionKey = production ? process.env.SESSION_SECRET : process.env.SESSION_SECRET || localSecrets.sessionKey;
+const Database = hostedDb ? null : (await import('better-sqlite3')).default;
+const PgAdapter = hostedDb ? (await import('./pg-sync-adapter.js')).PgSyncAdapter : null;
+export const db = hostedDb ? new PgAdapter(postgresUrl) : new Database(path.join(dataDir, 'kouturepro.sqlite'));
+if (!hostedDb) {
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+}
 
 export const uuid = () => crypto.randomUUID();
 export const iso = () => new Date().toISOString();
@@ -56,108 +82,23 @@ export function decryptBuffer(value) {
 }
 
 // All tenant-owned records carry org_id; query helpers in the API always scope to it.
-db.exec(`
-CREATE TABLE IF NOT EXISTS organizations (
- id TEXT PRIMARY KEY, slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT '',
- address TEXT DEFAULT '', city TEXT DEFAULT '', neighborhood TEXT DEFAULT '', whatsapp_phone TEXT DEFAULT '',
- specialties TEXT DEFAULT '[]', logo_url TEXT DEFAULT '', cover_url TEXT DEFAULT '',
- plan TEXT DEFAULT 'starter', currency TEXT DEFAULT 'XOF', reminders_sms INTEGER DEFAULT 0,
- reminders_whatsapp INTEGER DEFAULT 0, is_demo INTEGER DEFAULT 0, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS branches (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
- address TEXT DEFAULT '', city TEXT DEFAULT '', phone TEXT DEFAULT '', is_primary INTEGER DEFAULT 0, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS users (
- id TEXT PRIMARY KEY, org_id TEXT REFERENCES organizations(id), branch_id TEXT REFERENCES branches(id),
- name TEXT NOT NULL, phone TEXT UNIQUE, email TEXT UNIQUE, password_hash TEXT NOT NULL DEFAULT '',
- auth_version INTEGER NOT NULL DEFAULT 1, role TEXT NOT NULL DEFAULT 'owner', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS clients (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), branch_id TEXT NOT NULL REFERENCES branches(id),
- name TEXT NOT NULL, phone_encrypted TEXT NOT NULL DEFAULT '', address_encrypted TEXT NOT NULL DEFAULT '',
- notes_encrypted TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS measurements (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), client_id TEXT NOT NULL REFERENCES clients(id),
- type TEXT NOT NULL, value_encrypted TEXT NOT NULL, unit TEXT NOT NULL DEFAULT 'cm', voice_id TEXT DEFAULT '',
- created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS voices (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), client_id TEXT NOT NULL REFERENCES clients(id),
- mime TEXT NOT NULL, file_path TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS suppliers (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
- phone TEXT DEFAULT '', city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS fabrics (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), branch_id TEXT NOT NULL REFERENCES branches(id),
- name TEXT NOT NULL, category TEXT DEFAULT 'Tissu', color TEXT DEFAULT '', quantity REAL NOT NULL DEFAULT 0,
- unit TEXT DEFAULT 'm', unit_cost INTEGER DEFAULT 0, threshold REAL DEFAULT 3, supplier_id TEXT REFERENCES suppliers(id),
- created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS patterns (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
- garment_type TEXT DEFAULT '', description TEXT DEFAULT '', image_url TEXT DEFAULT '', measurements_json TEXT DEFAULT '{}',
- created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS orders (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), branch_id TEXT NOT NULL REFERENCES branches(id),
- client_id TEXT NOT NULL REFERENCES clients(id), reference TEXT NOT NULL, model TEXT NOT NULL, garment_type TEXT DEFAULT 'Tenue',
- fabric_id TEXT REFERENCES fabrics(id), fabric_source TEXT DEFAULT 'client', fabric_quantity REAL DEFAULT 0,
- pattern_id TEXT REFERENCES patterns(id), price INTEGER NOT NULL, material_cost INTEGER DEFAULT 0,
- due_date TEXT NOT NULL, fitting_date TEXT DEFAULT '', notes TEXT DEFAULT '', stage INTEGER DEFAULT 0,
- status TEXT DEFAULT 'active', assigned_user_id TEXT REFERENCES users(id), commission INTEGER DEFAULT 0,
- version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, delivered_at TEXT DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS stock_movements (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), fabric_id TEXT NOT NULL REFERENCES fabrics(id),
- kind TEXT NOT NULL, quantity REAL NOT NULL, order_id TEXT REFERENCES orders(id), note TEXT DEFAULT '', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS payments (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), order_id TEXT NOT NULL REFERENCES orders(id),
- amount INTEGER NOT NULL, method TEXT NOT NULL, provider TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'paid',
- transaction_id TEXT UNIQUE, payment_url TEXT DEFAULT '', created_at TEXT NOT NULL, confirmed_at TEXT DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS expenses (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), branch_id TEXT NOT NULL REFERENCES branches(id),
- category TEXT NOT NULL, label TEXT NOT NULL, amount INTEGER NOT NULL, supplier_id TEXT REFERENCES suppliers(id),
- fabric_id TEXT REFERENCES fabrics(id), quantity REAL DEFAULT 0, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS appointments (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL, phone TEXT NOT NULL,
- preferred_date TEXT NOT NULL, message TEXT DEFAULT '', status TEXT DEFAULT 'new', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS showcase_items (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), title TEXT NOT NULL,
- image_url TEXT NOT NULL, description TEXT DEFAULT '', price INTEGER DEFAULT 0, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS reviews (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
- rating INTEGER NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS savings_plans (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), order_id TEXT NOT NULL REFERENCES orders(id),
- target INTEGER NOT NULL, frequency TEXT DEFAULT 'mensuel', note TEXT DEFAULT '', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS savings_contributions (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), plan_id TEXT NOT NULL REFERENCES savings_plans(id),
- amount INTEGER NOT NULL, method TEXT NOT NULL DEFAULT 'espèces', created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS reminder_log (
- id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id), order_id TEXT NOT NULL REFERENCES orders(id),
- channel TEXT NOT NULL, kind TEXT NOT NULL, date_key TEXT NOT NULL, sent_at TEXT NOT NULL,
- UNIQUE(order_id, channel, kind, date_key)
-);
-CREATE INDEX IF NOT EXISTS ix_clients_org ON clients(org_id);
-CREATE INDEX IF NOT EXISTS ix_orders_org_due ON orders(org_id,due_date);
-CREATE INDEX IF NOT EXISTS ix_payments_org ON payments(org_id);
-CREATE INDEX IF NOT EXISTS ix_measures_client ON measurements(client_id);
-`);
+if (hostedDb) {
+  db.transaction(() => {
+    // Serializes concurrent cold starts, including the first CREATE SCHEMA.
+    db.exec('SELECT pg_advisory_xact_lock(7489201)');
+    db.exec('CREATE SCHEMA IF NOT EXISTS kouturepro');
+    db.exec(schema);
+    db.exec('ALTER TABLE measurements ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1');
+    db.exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT');
+    db.exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT ''");
+    db.exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1');
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users(email)');
+  })();
+} else db.exec(schema);
 
 // Existing OTP-era databases had a non-null phone and no password. Rebuild only
 // that table to allow email-only accounts while preserving staff/order references.
+if (!hostedDb) {
 const userColumns=db.pragma('table_info(users)');
 if (userColumns.find(c=>c.name==='phone')?.notnull) {
   db.pragma('foreign_keys = OFF');
@@ -189,6 +130,7 @@ db.exec('DROP TABLE IF EXISTS otp_requests');
 // Light migration for databases created before editable measurements were introduced.
 if (!db.pragma('table_info(measurements)').some(c => c.name === 'version')) {
   db.exec('ALTER TABLE measurements ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
+}
 }
 
 function seedDemo() {
@@ -277,7 +219,7 @@ function seedDemo() {
   ]) db.prepare('INSERT INTO reviews (id,org_id,name,rating,text,created_at) VALUES (?,?,?,?,?,?)').run(id,org,name,rating,text,now);
   db.prepare('INSERT INTO savings_plans (id,org_id,order_id,target,frequency,note,created_at) VALUES (?,?,?,?,?,?,?)').run('plan1',org,'o7',120000,'mensuel','Échelonnement pour la robe de mariage',now);
 }
-if (process.env.NODE_ENV !== 'production' && process.env.SEED_DEMO !== '0') {
+if (!production && process.env.SEED_DEMO !== '0' && (!hostedDb || (process.env.USE_POSTGRES === '1' && process.env.SEED_DEMO === '1'))) {
   seedDemo();
   // Development accounts still require a real password and never bypass login.
   // Only set missing hashes: restarting the server must not override changes.
@@ -299,7 +241,7 @@ export function list(table,orgId){ return db.prepare(`SELECT * FROM ${table} WHE
 // SQLite's online backup API produces a consistent snapshot while writes continue.
 // Keep seven daily copies; production operators should additionally replicate off-site.
 const backupDir = path.join(dataDir, 'backups');
-fs.mkdirSync(backupDir, { recursive: true });
+if (!hostedDb) fs.mkdirSync(backupDir, { recursive: true });
 let backupRunning = false;
 async function dailyBackup() {
   if (backupRunning) return;
@@ -314,5 +256,5 @@ async function dailyBackup() {
   finally { backupRunning = false; }
 }
 // A generation script can await the first backup before safely closing SQLite.
-export const initialBackup = dailyBackup();
-setInterval(dailyBackup, 60 * 60 * 1000).unref();
+export const initialBackup = hostedDb ? Promise.resolve() : dailyBackup();
+if (!hostedDb) setInterval(dailyBackup, 60 * 60 * 1000).unref();

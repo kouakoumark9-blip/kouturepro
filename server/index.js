@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -8,16 +7,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { db, uuid, iso, encrypt, decryptBuffer, encryptBuffer, sessionKey, clientOut, measurementOut, orgOut, orgRow, orgBySlug, list } from './db.js';
+import { db, hostedDb, uuid, iso, encrypt, decryptBuffer, encryptBuffer, sessionKey, clientOut, measurementOut, orgOut, orgRow, orgBySlug, list } from './db.js';
 
 const app = express();
+if (process.env.RENDER === 'true' || process.env.VERCEL === '1') app.set('trust proxy', 1);
 const port = Number(process.env.PORT || 3000);
-const demoMode = process.env.NODE_ENV !== 'production' && process.env.SEED_DEMO !== '0';
-const baseUrl = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/,'');
-const uploadsDir=path.resolve(process.env.DATA_DIR || 'data','uploads');
-const publicUploadsDir=path.resolve(process.env.DATA_DIR || 'data','public-uploads');
-fs.mkdirSync(uploadsDir,{recursive:true});fs.mkdirSync(publicUploadsDir,{recursive:true});
-app.use('/uploads',express.static(publicUploadsDir,{maxAge:'1d',immutable:true}));
+const demoMode = process.env.NODE_ENV !== 'production' && process.env.SEED_DEMO !== '0' &&
+ (!hostedDb || (process.env.USE_POSTGRES === '1' && process.env.SEED_DEMO === '1'));
+const vercelHost = process.env.VERCEL_ENV === 'production' ? process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL : process.env.VERCEL_URL;
+const baseUrl = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || (vercelHost ? `https://${vercelHost}` : '')).replace(/\/+$/,'');
+if (process.env.NODE_ENV === 'production' && baseUrl) {
+  let valid = false;
+  try { const url = new URL(baseUrl); valid = url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash; } catch {}
+  if (!valid) throw new Error('PUBLIC_BASE_URL doit être une origine HTTPS publique (sans chemin).');
+}
+const uploadsDir=hostedDb?null:path.resolve(process.env.DATA_DIR || 'data','uploads');
+const publicUploadsDir=hostedDb?null:path.resolve(process.env.DATA_DIR || 'data','public-uploads');
+if(!hostedDb){
+ fs.mkdirSync(uploadsDir,{recursive:true});fs.mkdirSync(publicUploadsDir,{recursive:true});
+ app.use('/uploads',express.static(publicUploadsDir,{maxAge:'1d',immutable:true}));
+}
 app.disable('x-powered-by');
 app.use(express.json({limit:'1mb'}));
 app.use(express.urlencoded({extended:false,limit:'100kb'}));
@@ -46,6 +55,13 @@ function roles(...allowed){return (req,res,next)=>allowed.includes(req.user.role
 function row(req,table,id){const r=db.prepare(`SELECT * FROM ${table} WHERE id=? AND org_id=?`).get(id,req.user.org_id);if(!r)throw err(404,'Élément introuvable.');if(!['owner','accountant'].includes(req.user.role)&&r.branch_id&&r.branch_id!==req.user.branch_id)throw err(403,'Cet élément appartient à une autre boutique.');return r;}
 function branchId(req,requested){const id=['owner','accountant'].includes(req.user.role)&&requested?requested:req.user.branch_id;if(!db.prepare('SELECT id FROM branches WHERE id=? AND org_id=?').get(id,req.user.org_id))throw err(400,'Boutique introuvable.');return id;}
 function recordId(id){return /^[a-zA-Z0-9_-]{1,90}$/.test(String(id||''))?String(id):uuid();}
+function workshopImage(orgId,value){
+ const url=text(value,500);if(!url)return '';
+ if(/^\/assets\/[a-zA-Z0-9_.-]+$/.test(url))return url;
+ if(!hostedDb&&/^\/uploads\/[a-zA-Z0-9_.-]+$/.test(url))return url; // Existing local pictures.
+ if(db.prepare('SELECT url FROM uploaded_images WHERE url=? AND org_id=?').get(url,orgId))return url;
+ throw err(400,'Choisissez une image envoyée depuis votre atelier.');
+}
 function transaction(fn){return db.transaction(fn)();}
 
 // Only password-backed sessions are accepted; OTP-era cookies no longer grant access.
@@ -64,12 +80,26 @@ function checkPassword(value){
  return value;
 }
 const loginAttempts=new Map(),signupAttempts=new Map();
-function limit(map,key,max,period){
- const now=Date.now();let entry=map.get(key);
+function limit(map,key,max,period,message='Trop de tentatives. Réessayez un peu plus tard.'){
+ const now=Date.now();
+ if(hostedDb){
+  const id=crypto.createHmac('sha256',sessionKey).update(key).digest('hex');
+  const {hits}=db.prepare(`INSERT INTO rate_limits (id,started,hits) VALUES (?,?,1)
+   ON CONFLICT(id) DO UPDATE SET hits=CASE WHEN rate_limits.started<? THEN 1 ELSE rate_limits.hits+1 END,
+   started=CASE WHEN rate_limits.started<? THEN ? ELSE rate_limits.started END RETURNING hits`)
+   .get(id,now,now-period,now-period,now);
+  if(hits>max)throw err(429,message);
+  return;
+ }
+ let entry=map.get(key);
  if(!entry||now-entry.from>period)entry={from:now,count:0};
- if(++entry.count>max)throw err(429,'Trop de tentatives. Réessayez un peu plus tard.');
+ if(++entry.count>max)throw err(429,message);
  map.set(key,entry);
  if(map.size>12000)for(const [k,v] of map){if(now-v.from>period)map.delete(k);}
+}
+function resetLimit(map,key){
+ if(hostedDb){const id=crypto.createHmac('sha256',sessionKey).update(key).digest('hex');db.prepare('DELETE FROM rate_limits WHERE id=?').run(id);}
+ else map.delete(key);
 }
 const dummyHash=bcrypt.hashSync('not-a-real-password',10);
 app.post('/api/auth/signup',api((req,res)=>{
@@ -89,7 +119,7 @@ app.post('/api/auth/login',api((req,res)=>{
  const user=db.prepare(`SELECT * FROM users WHERE ${kind}=?`).get(value);
  if(!bcrypt.compareSync(password,user?.password_hash||dummyHash))throw err(401,'Identifiant ou mot de passe incorrect.');
  if(process.env.NODE_ENV==='production'&&user.org_id&&orgRow(user.org_id)?.is_demo)throw err(403,'Le compte de démonstration est désactivé en production.');
- loginAttempts.delete(req.ip+':'+value);
+ resetLimit(loginAttempts,req.ip+':'+value);
  setSession(res,user);res.json({user:userOut(user),needs_onboarding:!user.org_id});
 }));
 app.post('/api/auth/change-password',auth,api((req,res)=>{
@@ -165,22 +195,31 @@ app.patch('/api/measurements/:id',auth,withOrg,roles('owner','tailor','apprentic
 }));
 app.delete('/api/measurements/:id',auth,withOrg,roles('owner','tailor'),api((req,res)=>{const m=row(req,'measurements',req.params.id);row(req,'clients',m.client_id);db.prepare('DELETE FROM measurements WHERE id=? AND org_id=?').run(req.params.id,req.user.org_id);res.json({ok:true});}));
 
+const blobStore = hostedDb ? await import('@vercel/blob') : null;
 const audioUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:3*1024*1024},fileFilter:(req,file,cb)=>cb(null,/^audio\/(webm|ogg|mp4|mpeg|wav|x-m4a|aac)$/.test(file.mimetype))});
-app.post('/api/uploads/voice',auth,withOrg,audioUpload.single('audio'),api((req,res)=>{
- if(!req.file)throw err(400,'Fichier audio invalide (3 Mo maximum).');const client=row(req,'clients',req.body.client_id),id=uuid(),filePath=path.join(uploadsDir,id+'.enc');
- fs.writeFileSync(filePath,encryptBuffer(req.file.buffer),{mode:0o600});
+app.post('/api/uploads/voice',auth,withOrg,audioUpload.single('audio'),api(async(req,res)=>{
+ if(!req.file)throw err(400,'Fichier audio invalide (3 Mo maximum).');const client=row(req,'clients',req.body.client_id),id=uuid();
+ const encrypted=encryptBuffer(req.file.buffer);
+ const filePath=hostedDb?(await blobStore.put(`voices/${req.user.org_id}/${id}.enc`,encrypted,{access:'public',contentType:'application/octet-stream'})).url:path.join(uploadsDir,id+'.enc');
+ if(!hostedDb)fs.writeFileSync(filePath,encrypted,{mode:0o600});
  db.prepare('INSERT INTO voices (id,org_id,client_id,mime,file_path,created_at) VALUES (?,?,?,?,?,?)').run(id,req.user.org_id,client.id,req.file.mimetype,filePath,iso());
  res.status(201).json({voice_id:id,url:'/api/uploads/voice/'+id});
 }));
-app.get('/api/uploads/voice/:id',auth,withOrg,api((req,res)=>{
- const voice=row(req,'voices',req.params.id);row(req,'clients',voice.client_id);res.setHeader('Content-Type',voice.mime);res.setHeader('Cache-Control','private, max-age=300');res.send(decryptBuffer(fs.readFileSync(voice.file_path)));
+app.get('/api/uploads/voice/:id',auth,withOrg,api(async(req,res)=>{
+ const voice=row(req,'voices',req.params.id);row(req,'clients',voice.client_id);
+ let encrypted;
+ if(hostedDb){const object=await blobStore.get(voice.file_path,{access:'public'});if(object?.statusCode!==200)throw err(404,'Note vocale introuvable.');encrypted=Buffer.from(await new Response(object.stream).arrayBuffer());}
+ else encrypted=fs.readFileSync(voice.file_path);
+ res.setHeader('Content-Type',voice.mime);res.setHeader('Cache-Control','private, no-store');res.send(decryptBuffer(encrypted));
 }));
 const imageUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:4*1024*1024},fileFilter:(req,file,cb)=>cb(null,['image/jpeg','image/png','image/webp'].includes(file.mimetype))});
-app.post('/api/uploads/image',auth,withOrg,roles('owner'),imageUpload.single('image'),api((req,res)=>{
+app.post('/api/uploads/image',auth,withOrg,roles('owner'),imageUpload.single('image'),api(async(req,res)=>{
  if(!req.file)throw err(400,'Image JPG, PNG ou WebP uniquement (4 Mo maximum).');
- const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[req.file.mimetype];const name=uuid()+'.'+ext;
- fs.writeFileSync(path.join(publicUploadsDir,name),req.file.buffer,{mode:0o644});
- res.status(201).json({url:'/uploads/'+name});
+ const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[req.file.mimetype],name=uuid()+'.'+ext;
+ const url=hostedDb?(await blobStore.put(`showcase/${req.user.org_id}/${name}`,req.file.buffer,{access:'public',contentType:req.file.mimetype})).url:'/uploads/'+name;
+ if(!hostedDb)fs.writeFileSync(path.join(publicUploadsDir,name),req.file.buffer,{mode:0o644});
+ db.prepare('INSERT INTO uploaded_images (url,org_id,created_at) VALUES (?,?,?)').run(url,req.user.org_id,iso());
+ res.status(201).json({url});
 }));
 
 app.post('/api/orders',auth,withOrg,roles('owner','tailor'),api((req,res)=>{
@@ -397,7 +436,7 @@ app.post('/api/savings/:id/contributions',auth,withOrg,roles('owner','accountant
  res.status(201).json({item:row(req,'savings_contributions',id)});
 }));
 app.patch('/api/organization',auth,withOrg,roles('owner'),api((req,res)=>{
- const o=req.org;const mediaUrl=(value)=>{const url=text(value,300);if(url&&!/^\/(assets|uploads)\/[a-zA-Z0-9_.-]+$/.test(url))throw err(400,'Choisissez une image envoyée depuis la vitrine.');return url;};
+ const o=req.org;const mediaUrl=(value)=>workshopImage(o.id,value);
  const values={name:text(req.body.name??o.name,100),description:text(req.body.description??o.description,900),address:text(req.body.address??o.address,200),city:text(req.body.city??o.city,100),neighborhood:text(req.body.neighborhood??o.neighborhood,100),whatsapp_phone:req.body.whatsapp_phone!==undefined?normalizePhone(req.body.whatsapp_phone):o.whatsapp_phone,
  specialties:Array.isArray(req.body.specialties)?JSON.stringify(req.body.specialties.map(x=>text(x,60)).filter(Boolean).slice(0,8)):o.specialties,
  cover_url:mediaUrl(req.body.cover_url??o.cover_url),logo_url:mediaUrl(req.body.logo_url??o.logo_url),reminders_sms:req.body.reminders_sms===undefined?o.reminders_sms:Number(!!req.body.reminders_sms),reminders_whatsapp:req.body.reminders_whatsapp===undefined?o.reminders_whatsapp:Number(!!req.body.reminders_whatsapp)};
@@ -405,7 +444,7 @@ app.patch('/api/organization',auth,withOrg,roles('owner'),api((req,res)=>{
 }));
 app.post('/api/showcase',auth,withOrg,roles('owner'),api((req,res)=>{
  const id=recordId(req.body.id);if(db.prepare('SELECT id FROM showcase_items WHERE id=? AND org_id=?').get(id,req.user.org_id))return res.json({item:row(req,'showcase_items',id)});
- const title=text(req.body.title,110),url=text(req.body.image_url,300);requireField(title,'Le titre');if(!/^\/(assets|uploads)\/[a-zA-Z0-9_.-]+$/.test(url))throw err(400,'Ajoutez une photo de la galerie.');
+ const title=text(req.body.title,110),url=workshopImage(req.user.org_id,req.body.image_url);requireField(title,'Le titre');requireField(url,'Ajoutez une photo de la galerie.');
  db.prepare('INSERT INTO showcase_items (id,org_id,title,image_url,description,price,created_at) VALUES (?,?,?,?,?,?,?)').run(id,req.user.org_id,title,url,text(req.body.description,300),Math.max(0,Math.round(Number(req.body.price)||0)),iso());res.status(201).json({item:row(req,'showcase_items',id)});
 }));
 app.delete('/api/showcase/:id',auth,withOrg,roles('owner'),api((req,res)=>{row(req,'showcase_items',req.params.id);db.prepare('DELETE FROM showcase_items WHERE id=? AND org_id=?').run(req.params.id,req.user.org_id);res.json({ok:true});}));
@@ -455,7 +494,7 @@ async function runReminders(){
   const unpaid=db.prepare(`SELECT o.*,c.name client_name,c.phone_encrypted,o.price-COALESCE(SUM(CASE WHEN p.status='paid' THEN p.amount ELSE 0 END),0) AS remaining
    FROM orders o JOIN clients c ON c.id=o.client_id LEFT JOIN payments p ON p.order_id=o.id
    WHERE o.org_id=? AND o.status='active' AND o.due_date<?
-   GROUP BY o.id HAVING remaining>0 LIMIT 100`).all(org.id,today);
+   GROUP BY o.id,c.name,c.phone_encrypted HAVING o.price-COALESCE(SUM(CASE WHEN p.status='paid' THEN p.amount ELSE 0 END),0)>0 LIMIT 100`).all(org.id,today);
   for(const order of unpaid){
    const days=Math.round((Date.parse(today+'T00:00:00Z')-Date.parse(order.due_date+'T00:00:00Z'))/86400000);
    if(![1,7,14].includes(days))continue;const phone=clientOut(order).phone;if(!phone)continue;
@@ -471,20 +510,34 @@ async function runReminders(){
   }
  }
 }
-setInterval(()=>runReminders().catch(e=>console.error(e)),60*60*1000).unref();
+app.get('/api/cron/reminders',api(async(req,res)=>{
+ if(!process.env.CRON_SECRET||req.get('Authorization')!==`Bearer ${process.env.CRON_SECRET}`)throw err(401,'Accès refusé.');
+ await runReminders();
+ if(hostedDb)db.prepare('DELETE FROM rate_limits WHERE started<?').run(Date.now()-2*864e5);
+ res.json({ok:true});
+}));
+if(!hostedDb)setInterval(()=>runReminders().catch(e=>console.error(e)),60*60*1000).unref();
 
 function publicData(org){const {slug,name,description,address,city,neighborhood,whatsapp_phone,logo_url,cover_url,currency}=org;return {organization:{slug,name,description,address,city,neighborhood,whatsapp_phone,logo_url,cover_url,currency,specialties:JSON.parse(org.specialties||'[]')},showcase:list('showcase_items',org.id),reviews:list('reviews',org.id),branches:list('branches',org.id).map(({name,address,city,phone})=>({name,address,city,phone}))};}
 app.get('/api/public/:slug',api((req,res)=>{const org=orgBySlug(req.params.slug);if(!org)throw err(404,'Atelier introuvable.');res.json(publicData(org));}));
 const appointmentHits=new Map();
 app.post('/api/public/:slug/appointments',api((req,res)=>{
  const org=orgBySlug(req.params.slug);if(!org)throw err(404,'Atelier introuvable.');
- const now=Date.now(),hit=appointmentHits.get(req.ip)||{n:0,t:now};if(now-hit.t>3600000){hit.n=0;hit.t=now;}if(++hit.n>8)throw err(429,'Trop de demandes. Réessayez plus tard.');appointmentHits.set(req.ip,hit);
+ limit(appointmentHits,'rdv:'+req.ip,8,3600000,'Trop de demandes. Réessayez plus tard.');
  const name=text(req.body.name,90),phone=normalizePhone(req.body.phone),date=text(req.body.preferred_date,10);requireField(name,'Votre nom');if(!validDate(date))throw err(400,'Choisissez une date valide.');
  db.prepare('INSERT INTO appointments (id,org_id,name,phone,preferred_date,message,created_at) VALUES (?,?,?,?,?,?,?)').run(uuid(),org.id,name,phone,date,text(req.body.message,500),iso());res.status(201).json({ok:true,message:"Votre demande a été envoyée à l'atelier. Il vous recontactera pour confirmer le rendez-vous."});
 }));
 app.get('/sitemap.xml',api((req,res)=>{const url=baseUrl||`${req.protocol}://${req.get('host')}`;const orgs=db.prepare('SELECT slug FROM organizations WHERE is_demo=0').all();res.type('xml').send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+orgs.map(o=>`<url><loc>${url}/${encodeURIComponent(o.slug)}</loc></url>`).join('')+'</urlset>');}));
 app.get('/robots.txt',(req,res)=>res.type('text').send('User-agent: *\nDisallow: /app\nDisallow: /api\nDisallow: /auth\nSitemap: '+(baseUrl||`${req.protocol}://${req.get('host')}`)+'/sitemap.xml\n'));
-app.get('/api/health',(req,res)=>res.json({ok:true,time:iso()}));
+app.get('/api/health',(req,res)=>{
+ try {
+  db.prepare('SELECT COUNT(*) AS total FROM organizations').get();
+  res.json({ok:true,database:'ready',time:iso()});
+ } catch (error) {
+  console.error('Database health check failed:', error.message);
+  res.status(503).json({ok:false,database:'unavailable'});
+ }
+});
 app.use('/api',(req,res,next)=>next(err(404,'Cette adresse API n’existe pas.')));
 app.use((error,req,res,next)=>{
  console.error(`[${new Date().toISOString()}] ${req.method} ${req.path}:`,error.message);
@@ -493,16 +546,17 @@ app.use((error,req,res,next)=>{
  res.status(error.status||500).json({error:error.status?error.message:'Une erreur est survenue. Veuillez réessayer.',...(error.current?{current:error.current}:{})});
 });
 
+function publicMedia(req,url){return new URL(url||'/assets/atelier-hero.jpg',baseUrl||`${req.protocol}://${req.get('host')}`).href;}
 function seoHead(req){
  const slug=decodeURIComponent(req.path.split('/')[1]||'');if(req.path.startsWith('/app')||req.path.startsWith('/auth')||req.path.startsWith('/onboarding'))return '<meta name="robots" content="noindex, nofollow">';
  const org=orgBySlug(slug);if(!org)return '';
  const {showcase,reviews}=publicData(org);const url=(baseUrl||`${req.protocol}://${req.get('host')}`)+'/'+encodeURIComponent(slug);
  const safe=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const json=(o)=>JSON.stringify(o).replace(/</g,'\\u003c');const address={ '@type':'PostalAddress',streetAddress:org.address,addressLocality:org.city,addressCountry:'CI'};
- const schema={'@context':'https://schema.org','@type':['LocalBusiness','ClothingStore'],'@id':url+'#atelier',name:org.name,description:org.description,url,telephone:org.whatsapp_phone,image:showcase.map(x=>(baseUrl||`${req.protocol}://${req.get('host')}`)+x.image_url),address,
- areaServed:org.city,hasOfferCatalog:{'@type':'OfferCatalog',name:'Créations sur mesure',itemListElement:showcase.map(x=>({'@type':'OfferCatalog',name:x.title,itemListElement:[{'@type':'Offer',itemOffered:{'@type':'Product',name:x.title,image:(baseUrl||`${req.protocol}://${req.get('host')}`)+x.image_url,description:x.description},...(x.price?{price:x.price,priceCurrency:'XOF'}:{})}]}))},
+ const schema={'@context':'https://schema.org','@type':['LocalBusiness','ClothingStore'],'@id':url+'#atelier',name:org.name,description:org.description,url,telephone:org.whatsapp_phone,image:showcase.map(x=>publicMedia(req,x.image_url)),address,
+ areaServed:org.city,hasOfferCatalog:{'@type':'OfferCatalog',name:'Créations sur mesure',itemListElement:showcase.map(x=>({'@type':'OfferCatalog',name:x.title,itemListElement:[{'@type':'Offer',itemOffered:{'@type':'Product',name:x.title,image:publicMedia(req,x.image_url),description:x.description},...(x.price?{price:x.price,priceCurrency:'XOF'}:{})}]}))},
  ...(reviews.length?{aggregateRating:{'@type':'AggregateRating',ratingValue:(reviews.reduce((a,x)=>a+x.rating,0)/reviews.length).toFixed(1),reviewCount:reviews.length}}:{})};
- return `<title>${safe(org.name)} — Couture sur mesure à ${safe(org.city)} | KouturePro</title><meta name="description" content="${safe(org.description)}">${org.is_demo?'<meta name="robots" content="noindex, nofollow">':''}<link rel="canonical" href="${safe(url)}"><meta property="og:type" content="website"><meta property="og:title" content="${safe(org.name)} — Sur mesure à ${safe(org.city)}"><meta property="og:description" content="${safe(org.description)}"><meta property="og:image" content="${safe((baseUrl||`${req.protocol}://${req.get('host')}`)+(org.cover_url||'/assets/atelier-hero.jpg'))}"><script type="application/ld+json">${json(schema)}</script>`;
+ return `<title>${safe(org.name)} — Couture sur mesure à ${safe(org.city)} | KouturePro</title><meta name="description" content="${safe(org.description)}">${org.is_demo?'<meta name="robots" content="noindex, nofollow">':''}<link rel="canonical" href="${safe(url)}"><meta property="og:type" content="website"><meta property="og:title" content="${safe(org.name)} — Sur mesure à ${safe(org.city)}"><meta property="og:description" content="${safe(org.description)}"><meta property="og:image" content="${safe(publicMedia(req,org.cover_url))}"><script type="application/ld+json">${json(schema)}</script>`;
 }
 function insertSeo(req,html){
  const head=seoHead(req);if(head.includes('<title>'))html=html.replace(/<title>[^<]*<\/title>/,'').replace(/<meta name="description"[^>]*>/,'');
@@ -522,6 +576,7 @@ if(process.env.API_ONLY==='1'){
  app.use(express.static(path.resolve('public')));
  app.get('*',(req,res)=>{const html=insertSeo(req,fs.readFileSync(path.resolve('index.html'),'utf8'));res.type('html').send(html);});
 }else if(process.env.NODE_ENV!=='production'&&process.env.SERVE_BUILD!=='1'){
+ const {createServer:createViteServer}=await import('vite');
  const vite=await createViteServer({server:{middlewareMode:true,host:'0.0.0.0',allowedHosts:true},appType:'custom'});
  app.use(vite.middlewares);
  app.get('*',async(req,res,next)=>{try{let html=fs.readFileSync(path.resolve('index.html'),'utf8');html=insertSeo(req,html);html=await vite.transformIndexHtml(req.originalUrl,html);res.status(200).set({'Content-Type':'text/html','Cache-Control':'no-cache'}).end(html);}catch(e){vite.ssrFixStacktrace(e);next(e);}});
@@ -530,4 +585,5 @@ if(process.env.API_ONLY==='1'){
  // Gallery uploads are served from DATA_DIR/public-uploads by the middleware above.
  app.get('*',(req,res)=>{let html=fs.readFileSync(path.resolve('dist/index.html'),'utf8');html=insertSeo(req,html);res.type('html').send(html);});
 }
-app.listen(port,'0.0.0.0',()=>console.log(`KouturePro ready on http://0.0.0.0:${port} (${demoMode?'demo':'production'})`));
+if (process.env.VERCEL !== '1') app.listen(port,'0.0.0.0',()=>console.log(`KouturePro ready on http://0.0.0.0:${port} (${demoMode?'demo':'production'})`));
+export default app;

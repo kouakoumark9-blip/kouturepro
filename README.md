@@ -1,6 +1,6 @@
 # KouturePro Enterprise
 
-Application SaaS/PWA de gestion d'atelier de couture, en français et en FCFA, avec vitrine publique par atelier.
+Application SaaS/PWA de gestion d'atelier de couture, en français et en FCFA, avec vitrine publique par atelier. **Déploiement visé : Vercel Functions + PostgreSQL (Neon) + Vercel Blob.** La base SQLite indépendante reste réservée au développement local ; elle n'est pas envoyée sur Vercel. Consultez [le guide de déploiement Vercel](docs/deploiement-vercel.md) avant de connecter des clients réels.
 
 ## Aperçu
 
@@ -26,12 +26,18 @@ DATA_DIR=demo-data npm run dev
 
 La commande crée **`demo-data/kouturepro.sqlite`** avec un atelier, des clients, mensurations, commandes, paiements, tissus et membres fictifs. Elle refuse d’écraser un dossier qui contient déjà une base ou une clé ; dans ce projet, `demo-data/` a déjà été généré. Son fichier **`demo-data/local-secrets.json`** est indispensable pour relire les champs chiffrés : gardez les deux fichiers ensemble. La base existante dans `data/` n'est ni copiée ni modifiée. Cette base de démonstration est réservée au **développement**, et ces fichiers sont exclus de Git ; seul le script de génération est publié.
 
-- `npm test` : test d'API sur une base temporaire et indépendante.
+- `npm test` : tests d'API sur des bases SQLite temporaires ; avec `TEST_POSTGRES_URL` pointant **uniquement vers une base PostgreSQL jetable**, exécute en plus les tests PostgreSQL (redémarrage, persistance, chiffrement, isolation par atelier, verrouillage de connexion).
 - `npm run test:auth` : parcours navigateur isolé Connexion / Inscription / hors ligne / changement de mot de passe (nécessite Chromium Playwright et `npm run build`).
-- `npm run build` : construit le site de production.
+- `npm run build` : construit le site de production et le Worker PostgreSQL autonome requis par la Function Vercel.
 - `SERVE_BUILD=1 npm run dev` : sert le build déjà créé avec la démo, sans lancer Vite (pratique sur un petit serveur de test).
 - `npm start` : sert le build de production après configuration des secrets ci-dessous.
 - `node tests/e2e.mjs` : parcours navigateur facultatif avec Playwright, **modifie les données de la démo** (installer Chromium et ses dépendances Playwright au préalable).
+
+## Mettre en ligne sur Vercel
+
+Le code est conçu pour être déployé **dans le même projet Vercel** que le site : interface React/Vite, Function Express, PostgreSQL hébergé et Blob. Aucun service Render n'est nécessaire. Dans **Settings → Environment Variables** du projet Vercel, vérifier `DATABASE_URL_UNPOOLED` (Neon direct), `BLOB_STORE_ID` + OIDC Vercel pour un **store Blob public**, puis ajouter `APP_ENCRYPTION_KEY`, `SESSION_SECRET` et `CRON_SECRET` (secrets distincts et stables). Déployer la branche `main` après avoir publié les modifications : cela lance `npm run build` et les routes de `vercel.json`. Le premier compte réel se crée sur `/auth` ; aucun compte fictif n'est importé. Vérifier ensuite `/api/health`, créer un atelier, un client et une commande, recharger le tableau de bord, puis vérifier ces données après un nouveau déploiement. **Un déploiement n'est confirmé qu'après ce contrôle sur l'URL publique.**
+
+Voir **[docs/deploiement-vercel.md](docs/deploiement-vercel.md)** pour les étapes détaillées, la configuration Blob/Neon, les tests et les limites de charge. Le tableau de bord fonctionne en local avec PostgreSQL ; l'accès effectif au compte Vercel et au store Blob reste indispensable pour valider la production.
 
 ## Parcours déjà utilisables
 
@@ -64,13 +70,16 @@ Les mots de passe sont hachés avec bcrypt et ne sont jamais renvoyés par l’A
 
 En production, `APP_ENCRYPTION_KEY` et `SESSION_SECRET` sont obligatoires (deux secrets distincts, par exemple `openssl rand -hex 32`). **Ne perdez pas `APP_ENCRYPTION_KEY`** : elle sert au déchiffrement des mesures, des coordonnées clients et des notes vocales. En développement, une clé locale est créée dans `data/local-secrets.json`. Sessions en cookie HTTP-only/SameSite, séparation des données par atelier, permissions API et protection des écritures contre les formulaires intersites.
 
-SQLite fonctionne en mode WAL avec sauvegarde cohérente **une fois par jour**, conservation des sept dernières copies dans `DATA_DIR/backups/`. Sauvegarder également **hors du serveur** tout `DATA_DIR` (notamment `uploads/` et `public-uploads/`), ainsi que la clé de chiffrement. Placer le service derrière un reverse proxy HTTPS ; protéger l'accès au répertoire de données et ne pas publier `.env`.
+**Sur Vercel**, les données sont conservées dans PostgreSQL, isolées dans le schéma `kouturepro`, et les fichiers dans Vercel Blob ; **aucune base ni aucun média client n'est écrit sur le disque éphémère Vercel**. Mettre en place des sauvegardes/une politique de restauration PostgreSQL et Blob auprès des fournisseurs et conserver les secrets de chiffrement hors de Vercel. Ne jamais faire tourner les tests PostgreSQL sur la base de production. Le connecteur PostgreSQL synchrone exécute les requêtes dans un Worker dédié, mais **bloque la boucle d'événements de la Function pendant l'attente** : adapté au démarrage/pilotage à charge modérée, à remplacer par des accès asynchrones pour une forte concurrence. Les migrations sont actuellement lancées au démarrage et protégées contre les démarrages concurrents.
+
+**En local, hors Vercel**, SQLite fonctionne en mode WAL avec sauvegarde cohérente **une fois par jour**, conservation des sept dernières copies dans `DATA_DIR/backups/`. Sauvegarder également tout `DATA_DIR` (notamment `uploads/` et `public-uploads/`), ainsi que la clé de chiffrement. Ne pas publier `.env`.
 
 ## Architecture
 
 - Front : React, Vite, Tailwind CSS, Lucide, polices hébergées localement ; CSS mobile-first, manifest et service worker.
-- Back : Express, API REST, SQLite `better-sqlite3`, AES-256-GCM pour les données sensibles, PDFKit.
-- Données : `DATA_DIR/kouturepro.sqlite` ; instantanés quotidiens dans `DATA_DIR/backups/`. Les médias publics sont dans `DATA_DIR/public-uploads/`, l'audio privé chiffré dans `DATA_DIR/uploads/`.
+- Back : Express (Function Vercel exportée par `api/index.js`), API REST, AES-256-GCM pour les données sensibles, PDFKit ; Node.js 22.
+- Vercel : PostgreSQL direct, schéma `kouturepro`, Blob public pour les images de vitrine et Blob contenant uniquement le **chiffrement** de l'audio privé ; l'API authentifiée déchiffre les notes vocales. Les limites de connexion sont partagées via PostgreSQL entre Functions. Rappels via Vercel Cron quotidien et `CRON_SECRET`.
+- Local : SQLite `better-sqlite3` dans `DATA_DIR/kouturepro.sqlite` ; instantanés quotidiens dans `DATA_DIR/backups/`, médias et audio dans `DATA_DIR/`. La base fictive reste indépendante.
 - Hors ligne : coque PWA mise en cache, instantané local et file d'écritures IndexedDB ; rejeu dans l'ordre à la reconnexion et choix explicite lorsque deux versions ont été modifiées.
 
 ## Périmètre transparent

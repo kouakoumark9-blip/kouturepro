@@ -1,0 +1,26 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60,
+      "includeFiles": "dist/**"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index?__kp_path=/api/:path*" },
+    { "source": "/receipt/:path*", "destination": "/api/index?__kp_path=/receipt/:path*" },
+    { "source": "/sitemap.xml", "destination": "/api/index?__kp_path=/sitemap.xml" },
+    { "source": "/robots.txt", "destination": "/api/index?__kp_path=/robots.txt" },
+    { "source": "/app/:path*", "destination": "/api/index?__kp_path=/app/:path*" },
+    { "source": "/auth", "destination": "/api/index?__kp_path=/auth" },
+    { "source": "/onboarding", "destination": "/api/index?__kp_path=/onboarding" },
+    { "source": "/:slug", "destination": "/api/index?__kp_path=/:slug" },
+    { "source": "/", "destination": "/api/index?__kp_path=/" }
+  ],
+  "crons": [
+    { "path": "/api/cron/reminders", "schedule": "0 8 * * *" }
+  ]
+}

@@ -1,6 +1,6 @@
 # KouturePro — déploiement intégral sur Vercel
 
-> **État au 23 septembre 2026 :** l’interface, l’API et PostgreSQL ont été testés **localement**. Les modifications de cette migration ne sont pas encore publiées sur GitHub ni déployées sur votre projet Vercel. L’URL `vercel.com/.../kouturepro` est la page d’administration du projet, pas l’adresse publique du SaaS. Ni le PostgreSQL hébergé ni le store Blob connecté n’ont été accessibles pour un test réel dans cet environnement. Ne pas interpréter les essais locaux comme une mise en ligne.
+> **État au 23 septembre 2026 :** [kouturepro.vercel.app](https://kouturepro.vercel.app) sert l’application sur le projet Vercel `kouturepro`. L’API a renvoyé `database: ready` ; la base Neon directe `neondb` contient **21 tables KouturePro et 0 atelier** après la première mise en service. Le store Blob public `kouturepro-medias` (Paris) a été relié à Production et vérifié par un test d’écriture, lecture et suppression. Les écrans de connexion et d’inscription ont été ouverts en production sans erreur JavaScript. Les parcours avec de vraies données clients et les paiements marchands ne sont pas encore validés. L’URL `vercel.com/.../kouturepro` reste la page d’administration, pas l’adresse publique du SaaS.
 
 ## 1. Préparer le projet
 
@@ -19,9 +19,9 @@ Dans **Settings → Environment Variables** pour l’environnement **Production*
 
 ## 3. Configurer Vercel Blob connecté
 
-- Vérifier que le projet et l’environnement **Production** sont connectés à un store Blob **public** (nécessaire aux images de la vitrine). Sur Vercel, le SDK utilise normalement `BLOB_STORE_ID` et le jeton tournant `VERCEL_OIDC_TOKEN` fournis automatiquement ; n’inscrivez pas le jeton OIDC dans le dépôt et ne le transmettez pas manuellement au SDK.
+- Le projet et l’environnement **Production** sont reliés au store Blob **public** `kouturepro-medias` dans la région `cdg1` (Paris), nécessaire aux images de la vitrine. Le SDK utilise le `BLOB_READ_WRITE_TOKEN` injecté dans la Function. Une session CLI locale peut aussi utiliser `BLOB_STORE_ID` + un jeton `VERCEL_OIDC_TOKEN` du **même environnement** ; ne jamais inscrire ces jetons dans le dépôt.
 - Les photos de vitrine sont envoyées en Blob public ; seule une URL de photo envoyée **depuis le même atelier** peut ensuite être utilisée dans sa vitrine. Les notes vocales sont **chiffrées AES-256-GCM avant** le stockage Blob ; les octets du Blob ne sont pas un audio lisible. Leur lecture déchiffrée exige une session autorisée auprès de l’API. Pour une isolation stricte des objets eux-mêmes, prévoir un store privé séparé et adapter l’accès aux voix.
-- Tester **réellement** le store : après `vercel env pull`, lancer `npm run verify:blob` avec les variables de l’environnement (ou `BLOB_READ_WRITE_TOKEN`) ; le script exerce `put()` et `get()` sur des octets temporaires puis les supprime. Tester aussi une photo et une note vocale **via l’interface déployée**, les relire après actualisation et après un nouveau déploiement. Ces tests n’ont pas été possibles ici sans accès au store connecté. Si le store est privé ou absent, l’envoi de la photo publique ne pourra pas fonctionner tel quel.
+- Un test dans une Function de production non promue a exercé `put()`, `get()` et `del()` sur un objet temporaire du store public : **réussi, objet supprimé**. Il reste à tester une photo et une note vocale **via l’interface déployée**, à les relire après actualisation et après un nouveau déploiement. `vercel env pull` masque les valeurs de type Secret ; le test depuis un poste local ne pourra utiliser que des identifiants autorisés de l’environnement correspondant. Si le store est privé ou déconnecté, l’envoi de la photo publique ne fonctionnera pas tel quel.
 - Les requêtes d’upload passent par la Function : limite applicative **4 Mio** par image et **3 Mio** par voix ; la limite du corps d’une requête Vercel est d’environ **4,5 Mo** (en-têtes multipart inclus). Pour des fichiers plus volumineux il faudrait basculer vers un upload Blob direct depuis le navigateur avec autorisation serveur.
 
 ## 4. Configurer les secrets (Production)
@@ -34,6 +34,8 @@ Créer des valeurs **différentes, longues et stables**, par exemple avec `opens
 | `SESSION_SECRET` | Signe les sessions et les liens privés de factures ; la modifier invalide les sessions/liens en cours. |
 | `CRON_SECRET` | Protège `/api/cron/reminders` ; Vercel envoie automatiquement `Authorization: Bearer <secret>` quand il appelle le Cron. |
 | `PUBLIC_BASE_URL` | Recommandée avec votre domaine HTTPS définitif, sans slash final. En son absence l’application utilise `VERCEL_PROJECT_PRODUCTION_URL` ou `VERCEL_URL` ; l’URL des webhooks de paiement doit être publiquement joignable. |
+
+**Attention aux clés :** `APP_ENCRYPTION_KEY` et `SESSION_SECRET` ont été générées distinctes et enregistrées en tant que Secrets Vercel lors de la première publication. La base ne contenait alors aucun atelier. Comme Vercel masque les valeurs après leur enregistrement, **aucune copie de récupération hors Vercel n’est actuellement garantie**. Avant d’accueillir de vraies données de clients, remplacez la clé de chiffrement dans une base encore vide par une clé conservée dans un coffre-fort indépendant ; ensuite, ne la changez plus sans procédure de rechiffrement des données. Sauvegardez aussi Neon et Blob. `CRON_SECRET` est configuré en Production, mais l’exécution quotidienne reste à observer.
 
 **Ne pas renseigner** `SEED_DEMO=1`, `DATA_DIR`, `USE_POSTGRES=1` ni des identifiants de la base locale dans Production. `VERCEL=1` est défini par la plateforme. Un compte fictif de démonstration est refusé en production.
 

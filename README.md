@@ -1,6 +1,6 @@
 # KouturePro Enterprise
 
-Application SaaS/PWA de gestion d'atelier de couture, en français et en FCFA, avec vitrine publique par atelier. **Déploiement visé : Vercel Functions + PostgreSQL (Neon) + Vercel Blob.** La base SQLite indépendante reste réservée au développement local ; elle n'est pas envoyée sur Vercel. Consultez [le guide de déploiement Vercel](docs/deploiement-vercel.md) avant de connecter des clients réels.
+Application SaaS/PWA de gestion d'atelier de couture, en français et en FCFA, avec vitrine publique par atelier. **Production : [kouturepro.vercel.app](https://kouturepro.vercel.app)** sur Vercel Functions + PostgreSQL (Neon) + Vercel Blob. Le 23 septembre 2026, l'API et l'inscription ont été vérifiées en ligne ; la base Neon comporte 21 tables KouturePro et aucun atelier fictif. La base SQLite indépendante reste réservée au développement local ; elle n'est pas envoyée sur Vercel. **Avant de stocker de vraies données clients, prévoir une sauvegarde récupérable des clés de chiffrement hors Vercel** et consulter [le guide de déploiement Vercel](docs/deploiement-vercel.md).
 
 ## Aperçu
 
@@ -34,13 +34,13 @@ La commande crée **`demo-data/kouturepro.sqlite`** avec un atelier, des clients
 - `npm start` : sert le build de production après configuration des secrets ci-dessous.
 - `node tests/e2e.mjs` : parcours navigateur facultatif avec Playwright, **modifie les données de la démo** (installer Chromium et ses dépendances Playwright au préalable).
 
-## Mettre en ligne sur Vercel
+## Production Vercel, Neon et Blob
 
-**Créer les tables dans la base Neon déjà connectée :** suivre [database/README.md](database/README.md), puis exécuter [database/initialiser-neon.sql](database/initialiser-neon.sql) dans le Neon SQL Editor sur **la bonne branche/base**. Le script crée 21 tables dans le schéma `kouturepro`, sans importer de données fictives ni modifier Neon Auth. Une base PostgreSQL fictive indépendante est fournie localement dans `base-fictive-kouturepro-postgresql.zip` (non publiée dans Git).
+**État vérifié le 23 septembre 2026 :** la production est servie sur **[kouturepro.vercel.app](https://kouturepro.vercel.app)**. `/api/health` répond `database: ready`, `/auth` fonctionne, les visites sans session n'ouvrent pas le tableau de bord. La Function s'est connectée à la base directe Neon `neondb` et y a créé **21 tables** dans le schéma `kouturepro` ; un contrôle SQL séparé a confirmé **0 atelier** après la migration. Le store Blob public `kouturepro-medias` (région Paris) a passé un test réel d'écriture, lecture et suppression. La base fictive locale n'a **pas** été importée. [SQL d'initialisation reproductible](database/initialiser-neon.sql) et [guide Neon](database/README.md).
 
-Le code est conçu pour être déployé **dans le même projet Vercel** que le site : interface React/Vite, Function Express, PostgreSQL hébergé et Blob. Aucun service Render n'est nécessaire. Dans **Settings → Environment Variables** du projet Vercel, vérifier `DATABASE_URL_UNPOOLED` (Neon direct), `BLOB_STORE_ID` + OIDC Vercel pour un **store Blob public**, puis ajouter `APP_ENCRYPTION_KEY`, `SESSION_SECRET` et `CRON_SECRET` (secrets distincts et stables). Déployer la branche `main` après avoir publié les modifications : cela lance `npm run build` et les routes de `vercel.json`. Le premier compte réel se crée sur `/auth` ; aucun compte fictif n'est importé. Vérifier ensuite `/api/health`, créer un atelier, un client et une commande, recharger le tableau de bord, puis vérifier ces données après un nouveau déploiement. **Un déploiement n'est confirmé qu'après ce contrôle sur l'URL publique.**
+Le premier compte réel se crée sur `/auth`. **À terminer avant des données clients sensibles :** conserver une copie récupérable de `APP_ENCRYPTION_KEY` hors Vercel (la clé et `SESSION_SECRET` ont été générées pour mettre en service une base vide ; Vercel masque les valeurs après enregistrement), organiser des sauvegardes Neon/Blob, puis tester le parcours compte → client → commande → reconnexion sur la production. Ne jamais importer de base fictive sur Neon Production. Les moyens de paiement mobile nécessitent des accès marchands CinetPay actifs et une vérification réelle des opérateurs du contrat ; leur activation n'est pas confirmée par le simple déploiement.
 
-Voir **[docs/deploiement-vercel.md](docs/deploiement-vercel.md)** pour les étapes détaillées, la configuration Blob/Neon, les tests et les limites de charge. Le tableau de bord fonctionne en local avec PostgreSQL ; l'accès effectif au compte Vercel et au store Blob reste indispensable pour valider la production.
+Voir **[docs/deploiement-vercel.md](docs/deploiement-vercel.md)** pour la configuration, les contrôles et les limites de charge. Aucun service Render n'est nécessaire.
 
 ## Parcours déjà utilisables
 

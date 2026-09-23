@@ -1,4 +1,6 @@
-# Créer les tables KouturePro dans Neon
+# Tables KouturePro dans Neon
+
+**État vérifié le 23 septembre 2026 :** la première requête à l’API déployée sur Vercel a appliqué ce schéma à la base Neon directe `neondb` du projet `kouturepro`. Un contrôle SQL distinct a confirmé **21 tables dans `kouturepro` et 0 atelier** ; aucune base fictive n’a été importée. Les instructions ci-dessous servent à reproduire l’initialisation sur une **autre branche/base**, pas à recréer la Production déjà initialisée.
 
 **À distinguer :** Neon Auth et son URL JWKS servent à l'authentification ; ils ne donnent pas accès à la base PostgreSQL. Le projet KouturePro utilise actuellement sa propre connexion par e-mail **ou** téléphone et mot de passe. Le SQL ci-dessous crée ses tables dans le schéma `kouturepro` d'une **base Neon déjà existante** ; il ne crée pas un nouveau projet Neon, ne modifie pas les tables Neon Auth et ne transfère pas la base fictive vers la production.
 

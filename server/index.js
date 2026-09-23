@@ -48,7 +48,16 @@ const requireField=(v,label)=>{ if(!text(v))throw err(400,`${label} est obligato
 const normalizePhone=(phone)=>{ const p=String(phone||'').replace(/[\s.()\-]/g,''); if(!/^\+?[0-9]{8,15}$/.test(p)) throw err(400,'Saisissez un numéro de téléphone valide.');return p.startsWith('+')?p:'+'+p; };
 function cookie(req){const raw=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('kp_session='));return raw?decodeURIComponent(raw.split('=').slice(1).join('=')):'';}
 function setSession(res,user){const token=jwt.sign({sub:user.id,v:2,av:user.auth_version},sessionKey,{expiresIn:'30d'});res.cookie('kp_session',token,{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',maxAge:30*86400*1000,path:'/'});}
-function getUser(req){try{const payload=jwt.verify(cookie(req),sessionKey);if(payload.v!==2)return null;const user=db.prepare('SELECT * FROM users WHERE id=?').get(payload.sub);if(!user?.password_hash||payload.av!==user.auth_version)return null;if(process.env.NODE_ENV==='production'&&user.org_id&&orgRow(user.org_id)?.is_demo)return null;return user;}catch{return null;}}
+function getUser(req){
+ let payload;
+ try{payload=jwt.verify(cookie(req),sessionKey);}catch{return null;}
+ if(payload.v!==2)return null;
+ // An unavailable database is a server error, not an expired user session.
+ const user=db.prepare('SELECT * FROM users WHERE id=?').get(payload.sub);
+ if(!user?.password_hash||payload.av!==user.auth_version)return null;
+ if(process.env.NODE_ENV==='production'&&user.org_id&&orgRow(user.org_id)?.is_demo)return null;
+ return user;
+}
 function auth(req,res,next){req.user=getUser(req);if(!req.user)return next(err(401,'Votre session a expiré. Reconnectez-vous.'));next();}
 function withOrg(req,res,next){if(!req.user.org_id)return next(err(403,'Terminez la création de votre atelier.'));req.org=orgRow(req.user.org_id);if(!req.org)return next(err(404,'Atelier introuvable.'));next();}
 function roles(...allowed){return (req,res,next)=>allowed.includes(req.user.role)?next():next(err(403,'Vous ne disposez pas de cette autorisation.'));}
@@ -73,7 +82,8 @@ function loginIdentifier(value){
   if(email.length>254||!/^\S+@[^\s@]+\.[^\s@]+$/.test(email))throw err(400,'Saisissez une adresse e-mail valide.');
   return {kind:'email',value:email};
  }
- return {kind:'phone',value:normalizePhone(input)};
+ try{return {kind:'phone',value:normalizePhone(input)};}
+ catch(e){if(e.status===400)throw err(400,'Saisissez un e-mail complet (avec @) ou un numéro valide, ex. +225 07 12 34 56 78.');throw e;}
 }
 function checkPassword(value){
  if(typeof value!=='string'||value.length<10||Buffer.byteLength(value,'utf8')>72)throw err(400,'Choisissez un mot de passe de 10 à 72 caractères (72 octets maximum).');

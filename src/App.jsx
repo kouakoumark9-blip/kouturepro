@@ -38,13 +38,13 @@ function useRoute(){const [route,setRoute]=useState(window.location.pathname+win
 
 export default function App(){
  const [route,navigate]=useRoute(),path=pathname(route);
- const [data,setData]=useState(null),[ready,setReady]=useState(false),[online,setOnline]=useState(navigator.onLine),[forcedOffline,setForcedOffline]=useState(localStorage.getItem('kp-offline-sim')==='yes');
+ const [data,setData]=useState(null),[ready,setReady]=useState(false),[bootError,setBootError]=useState(''),[online,setOnline]=useState(navigator.onLine),[forcedOffline,setForcedOffline]=useState(localStorage.getItem('kp-offline-sim')==='yes');
  const [pending,setPending]=useState(0),[syncing,setSyncing]=useState(false),[conflict,setConflict]=useState(null),[branch,setBranch]=useState('all'),[quick,setQuick]=useState(false),[searchOpen,setSearchOpen]=useState(false),[alertsOpen,setAlertsOpen]=useState(false),[mobileMore,setMobileMore]=useState(false);
  const [toasts,setToasts]=useState([]);const syncRef=useRef(false);const activeOnline=online&&!forcedOffline;
  const notify=useCallback((message,type='success')=>{const id=uuid();setToasts(ts=>[...ts.slice(-3),{id,message,type}]);setTimeout(()=>setToasts(ts=>ts.filter(t=>t.id!==id)),4400);},[]);
  const refresh=useCallback(async()=>{const snapshot=await apiRequest('/api/bootstrap');const cached=await getSnapshot();if(cached?.user?.id&&cached.user.id!==snapshot.user.id){await clearQueue();setPending(0);}setData(snapshot);await saveSnapshot(snapshot);return snapshot;},[]);
  const boot=useCallback(async()=>{
-  setReady(false);
+  setReady(false);setBootError('');
   if(sessionStorage.getItem('kp-logged-out')==='yes'||localStorage.getItem('kp-logout-pending')==='yes'){
    setData(null);navigate('/auth',true);
    if(navigator.onLine&&localStorage.getItem('kp-logout-pending')==='yes')try{await apiRequest('/api/auth/logout',{method:'POST'});localStorage.removeItem('kp-logout-pending');}catch{}
@@ -57,10 +57,13 @@ export default function App(){
   try{await refresh();}catch(e){
    if(e.status===401){setData(null);navigate('/auth',true);}
    else if(e.status===403){
-    try{const me=await apiRequest('/api/auth/me');if(!me.user.org_id){setData(null);navigate('/onboarding',true);}else throw e;}
-    catch{setData(null);navigate('/auth',true);}
+    try{
+     const me=await apiRequest('/api/auth/me');setData(null);
+     if(!me.user.org_id)navigate('/onboarding',true);
+     else setBootError(e.message);
+    }catch(check){setData(null);if(check.status===401)navigate('/auth',true);else setBootError(check.message||e.message);}
    }else if(cached){setData(cached);notify('Impossible de joindre le serveur. Vos données locales restent disponibles.','error');}
-   else{setData(null);notify(e.message,'error');navigate('/auth',true);}
+   else{setData(null);setBootError(e.network?'Connexion au serveur impossible. Vérifiez Internet et réessayez.':e.message);}
   }finally{setReady(true);}
  },[navigate,notify,refresh]);
  useEffect(()=>{const on=()=>setOnline(true),off=()=>setOnline(false);window.addEventListener('online',on);window.addEventListener('offline',off);getQueue().then(q=>setPending(q.length));return()=>{window.removeEventListener('online',on);window.removeEventListener('offline',off);};},[]);
@@ -122,6 +125,7 @@ export default function App(){
    if(mode==='signup')notify('Compte créé ! Indiquez le nom et la ville de votre atelier pour ouvrir votre tableau de bord.');
   }else{await refresh();navigate('/app',true);}
  }}/><Toasts toasts={toasts} remove={id=>setToasts(ts=>ts.filter(t=>t.id!==id))}/></Context.Provider>;
+ if(inApp&&ready&&!data&&bootError)return <div className="loading-state" role="alert" style={{padding:'32px',textAlign:'center',gap:'14px'}}><CircleAlert size={30}/><h1 style={{fontSize:'1.4rem'}}>Impossible d’ouvrir le tableau de bord</h1><p style={{maxWidth:440}}>{bootError}</p><div style={{display:'flex',gap:12,flexWrap:'wrap',justifyContent:'center'}}><Button type="button" onClick={boot}>Réessayer</Button><Button type="button" variant="soft" onClick={()=>navigate('/auth',true)}>Se connecter</Button></div></div>;
  if(!ready||!data)return <Loading/>;
  const content=path==='/app'?<Dashboard/>:path==='/app/clients'?<Clients/>:path==='/app/orders'?<Orders/>:path.startsWith('/app/orders/')?<OrderDetail id={decodeURIComponent(path.split('/')[3])}/>:path==='/app/production'?<Production/>:path==='/app/payments'?<Payments/>:path==='/app/stock'?<Stock/>:path==='/app/team'?<Team/>:path==='/app/showcase'?<Showcase/>:path==='/app/stats'?<Stats/>:path==='/app/settings'?<Settings/>:<Dashboard/>;
  return <Context.Provider value={values}><div className="app-shell"><Sidebar/><div className="main-area"><Topbar/><main className="app-content">{content}</main></div><BottomNav/></div>

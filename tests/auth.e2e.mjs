@@ -21,6 +21,9 @@ try{
  assert.equal(await page.getByText('Juste une dernière étape.').count(),0);
  assert.equal(await page.getByRole('button',{name:'Recevoir mon code'}).count(),0);
  assert.equal(await page.getByRole('button',{name:'Explorer l’atelier de démonstration'}).count(),0);
+ const incomplete=await page.request.post(base+'/api/auth/signup',{headers:{'X-Requested-With':'KouturePro'},data:{name:'Awa Test',identifier:'pseudo-sans-arobase',password:'CoutureTest2026!'}});
+ assert.equal(incomplete.status(),400);
+ assert.match((await incomplete.json()).error,/e-mail complet.*@.*\+225/);
  await page.getByRole('tab',{name:'Inscription'}).click();
  await page.getByLabel(/^Votre nom/).fill('Awa Test');
  await page.getByLabel('E-mail ou numéro de téléphone').fill('AWA@EXEMPLE.CI');
@@ -29,16 +32,22 @@ try{
  await page.getByRole('button',{name:'Créer mon compte'}).click();
  await page.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
  assert.equal(await page.getByText('Étape 2 sur 2').isVisible(),true,'Un nouvel inscrit doit passer à une seule étape avant son tableau de bord.');
- // Si la navigation a été interrompue juste après la création du compte, une
- // nouvelle tentative retrouve le compte au lieu de laisser l’utilisateur bloqué.
- await page.goto(base+'/auth');await page.getByRole('tab',{name:'Inscription'}).click();
- await page.getByLabel(/^Votre nom/).fill('Awa Test');
- await page.getByLabel('E-mail ou numéro de téléphone').fill('AWA@EXEMPLE.CI');
- await page.getByLabel(/^Mot de passe/).fill('CoutureTest2026!');
- await page.getByLabel(/^Confirmer le mot de passe/).fill('CoutureTest2026!');
- await page.getByRole('button',{name:'Créer mon compte'}).click();
- await page.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
+ // Le navigateur garde la session et reprend l’étape atelier automatiquement.
+ await page.goto(base+'/auth');await page.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
+ // Sur un second appareil sans cookie, une inscription interrompue se reprend
+ // avec les mêmes identifiants, sans créer de doublon.
+ const resumedContext=await browser.newContext({viewport:{width:390,height:844}});
+ const resumed=await resumedContext.newPage();
+ await resumed.goto(base+'/auth');await resumed.getByRole('tab',{name:'Inscription'}).click();
+ await resumed.getByLabel(/^Votre nom/).fill('Awa Test');
+ await resumed.getByLabel('E-mail ou numéro de téléphone').fill('AWA@EXEMPLE.CI');
+ await resumed.getByLabel(/^Mot de passe/).fill('CoutureTest2026!');
+ await resumed.getByLabel(/^Confirmer le mot de passe/).fill('CoutureTest2026!');
+ await resumed.getByRole('button',{name:'Créer mon compte'}).click();
+ await resumed.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
+ await resumedContext.close();
  await page.reload();await page.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
+ assert.equal(await page.getByLabel('WhatsApp professionnel (facultatif)').count(),0,'Seulement le nom et la ville sont demandés.');
  await page.getByLabel('Nom de votre atelier').fill('Maison des Étoiles');
  await page.getByLabel('Ville').fill('Duekoué');
  await page.getByRole('button',{name:/Ouvrir mon tableau de bord/}).click();
@@ -58,6 +67,22 @@ try{
  await page.getByLabel(/^Mot de passe/).fill('CoutureTest2026!');
  await page.getByRole('button',{name:'Se connecter'}).click();
  await page.getByRole('heading',{name:/Bonjour Awa/}).waitFor();
+ await page.goto(base+'/auth');await page.getByRole('heading',{name:/Bonjour Awa/}).waitFor();
+ await page.goto(base+'/');await page.getByRole('heading',{name:/Bonjour Awa/}).waitFor();
+ assert.equal(new URL(page.url()).pathname,'/app','Le retour sur le site rouvre directement le tableau de bord.');
+ // A server outage is not an expired session. Show a retry instead of
+ // silently throwing a signed-in user back to the login page.
+ const failedContext=await browser.newContext({viewport:{width:390,height:844}});
+ await failedContext.addCookies(await page.context().cookies(base));
+ const temporarilyDown=await failedContext.newPage();temporarilyDown.on('pageerror',e=>errors.push(e.message));
+ await temporarilyDown.route('**/api/bootstrap',route=>route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Base momentanément indisponible.'})}));
+ await temporarilyDown.goto(base+'/app');
+ await temporarilyDown.getByRole('heading',{name:'Impossible d’ouvrir le tableau de bord'}).waitFor();
+ assert.equal(new URL(temporarilyDown.url()).pathname,'/app');
+ await temporarilyDown.unroute('**/api/bootstrap');
+ await temporarilyDown.getByRole('button',{name:'Réessayer'}).click();
+ await temporarilyDown.getByRole('heading',{name:/Bonjour Awa/}).waitFor();
+ await failedContext.close();
  // A connected account can continue reading its own cached data without network.
  await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>!!navigator.serviceWorker.controller);
  await page.context().setOffline(true);await page.reload({waitUntil:'domcontentloaded'});
@@ -84,7 +109,7 @@ try{
  await phone.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
  const me=await phone.request.get(base+'/api/auth/me');assert.equal(me.status(),200);const user=(await me.json()).user;
  assert.equal(user.phone,'+2250709090101');assert.equal(user.email,'');assert.equal(user.password_hash,undefined);
- await phone.waitForFunction(()=>document.querySelector('input[type=tel]')?.value==='+2250709090101');
+ assert.equal(await phone.locator('input[type=tel]').count(),0,'Le téléphone du compte est repris sans champ supplémentaire.');
  await phone.getByLabel('Nom de votre atelier').fill('Maison du Téléphone');
  // La base confirme la création, mais la réponse se perd : le navigateur
  // récupère l’atelier existant et ouvre quand même le tableau de bord.
@@ -99,7 +124,7 @@ try{
  assert.equal(phoneData.organization.whatsapp_phone,'+2250709090101','Préremplir le téléphone du propriétaire pour WhatsApp.');
  assert.deepEqual(errors,[]);
  console.log('✓ Sans session : Connexion / Inscription, aucun code ni démo automatique');
- console.log('✓ Inscription e-mail → étape unique facultative pour WhatsApp → tableau de bord');
- console.log('✓ Reprise après inscription interrompue, rechargement et changement de mot de passe');
+ console.log('✓ Inscription e-mail → nom et ville uniquement → tableau de bord');
+ console.log('✓ Reprise de session et du compte sur un autre appareil, rechargement, changement de mot de passe');
  console.log('✓ Inscription téléphone → étape unique → tableau de bord, identifiant normalisé');
 }finally{if(browser)await browser.close();server.kill('SIGTERM');fs.rmSync(dir,{recursive:true,force:true});}

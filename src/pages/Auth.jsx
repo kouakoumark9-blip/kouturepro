@@ -8,16 +8,18 @@ export default function Auth({onboarding,onAuthenticated}){
  const [mode,setMode]=useState('login');
  const [credentials,setCredentials]=useState({name:'',identifier:'',password:'',confirmation:''});
  const [showPassword,setShowPassword]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false);
- const [form,setForm]=useState({name:'',city:'Abidjan',whatsapp_phone:''});
+ const [form,setForm]=useState({name:'',city:'Abidjan'});
  useEffect(()=>{
-  if(!onboarding)return;
   let active=true;
+  // Reopen an existing workshop when someone returns to the site later.
+  // Explicit logout (including one queued offline) must never sign them back in.
   request('/api/auth/me').then(r=>{
    if(!active)return;
-   if(r.user.org_id){navigate('/app',true);return;}
-   setForm(f=>({...f,whatsapp_phone:f.whatsapp_phone||r.user.phone||''}));
+   if(onboarding){if(r.user.org_id)navigate('/app',true);return;}
+   if(sessionStorage.getItem('kp-logged-out')!=='yes'&&localStorage.getItem('kp-logout-pending')!=='yes')
+    navigate(r.user.org_id?'/app':'/onboarding',true);
   }).catch(err=>{
-   if(!active)return;
+   if(!active||!onboarding)return;
    if(err.status===401)navigate('/auth',true);
    else setError('Impossible de vérifier votre session. Vérifiez la connexion et réessayez.');
   });
@@ -45,7 +47,6 @@ export default function Auth({onboarding,onAuthenticated}){
     try{result=await request('/api/auth/login',{method:'POST',body:{identifier:credentials.identifier,password:credentials.password}});authMode='login';}
     catch{throw new Error('Ce compte existe déjà. Ouvrez « Connexion » avec son mot de passe pour continuer.');}
    }
-   if(result.needs_onboarding&&result.user?.phone)setForm(f=>({...f,whatsapp_phone:result.user.phone}));
    await onAuthenticated(result,authMode);
   }catch(e){setError(e.network?'Connexion Internet nécessaire pour accéder à votre compte.':e.message);}
   finally{setBusy(false);}
@@ -62,7 +63,9 @@ export default function Auth({onboarding,onAuthenticated}){
     const me=await request('/api/auth/me');
     if(!me.user.org_id)throw err;
    }
-   try{await refresh();}catch{notify('Atelier créé. Chargement de vos données en cours...','error');}
+   // Only leave this step after the authenticated dashboard really loads.
+   // On a temporary server error, a second click resumes the existing atelier.
+   try{await refresh();}catch(err){setError(`Votre atelier est enregistré. Impossible de charger le tableau de bord : ${err.message} Réessayez avec le bouton ci-dessous.`);return;}
    navigate('/app',true);notify('Bienvenue dans votre atelier KouturePro !');
   }catch(err){setError(err.network?'Connexion Internet nécessaire pour créer votre atelier.':err.message);}
   finally{setBusy(false);}
@@ -86,7 +89,7 @@ export default function Auth({onboarding,onAuthenticated}){
      </div>
      <form className="auth-form" onSubmit={submitAuth} autoComplete="on">
       {mode==='signup'&&<Input label="Votre nom" name="name" value={credentials.name} onChange={change} autoComplete="name" placeholder="Ex. Awa Koné" required/>}
-      <Input label="E-mail ou numéro de téléphone" name="identifier" value={credentials.identifier} onChange={change} autoComplete="username" placeholder="nom@atelier.ci ou +225 07…" required/>
+      <Input label="E-mail ou numéro de téléphone" name="identifier" value={credentials.identifier} onChange={change} autoComplete="username" placeholder="nom@atelier.ci ou +225 07 12 34 56 78" hint="Indiquez votre e-mail complet (avec @) ou votre numéro en chiffres." required/>
       <div className="auth-password-field"><Input label="Mot de passe" name="password" type={showPassword?'text':'password'} value={credentials.password} onChange={change} autoComplete={mode==='login'?'current-password':'new-password'} minLength={mode==='signup'?10:undefined} maxLength={72} required hint={mode==='signup'?'10 caractères minimum':''}/>
        <button type="button" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?'Masquer le mot de passe':'Afficher le mot de passe'} title={showPassword?'Masquer le mot de passe':'Afficher le mot de passe'}>{showPassword?<EyeOff size={18}/>:<Eye size={18}/>}</button></div>
       {mode==='signup'&&<Input label="Confirmer le mot de passe" name="confirmation" type={showPassword?'text':'password'} value={credentials.confirmation} onChange={change} autoComplete="new-password" minLength={10} maxLength={72} required/>}
@@ -99,11 +102,10 @@ export default function Auth({onboarding,onAuthenticated}){
      <div className="onboarding-top"><div className="auth-overline">INSCRIPTION · VOTRE ATELIER</div><span>Étape 2 sur 2</span></div>
      <div className="onboarding-progress"><span className="active"/><span className="active"/></div>
      <h2>Préparons votre atelier.</h2>
-     <p className="auth-subtitle">Deux informations suffisent pour commencer. Vous ajouterez votre logo, vos spécialités et WhatsApp plus tard dans la vitrine.</p>
+     <p className="auth-subtitle">Indiquez seulement le nom et la ville de votre atelier. Vous pourrez ajouter WhatsApp et vos créations plus tard.</p>
      <form onSubmit={finish} className="auth-form onboarding-form">
       <Input label="Nom de votre atelier" value={form.name} onChange={e=>{setForm({...form,name:e.target.value});setError('');}} placeholder="Ex. Atelier Koné" required autoFocus/>
       <Input label="Ville" value={form.city} onChange={e=>{setForm({...form,city:e.target.value});setError('');}} placeholder="Ex. Abidjan" required/>
-      <Input label="WhatsApp professionnel (facultatif)" type="tel" value={form.whatsapp_phone} onChange={e=>{setForm({...form,whatsapp_phone:e.target.value});setError('');}} placeholder="+225 ..." hint="Vous pourrez l’ajouter ou le modifier dans Vitrine (gestion)."/>
       {error&&<div className="auth-error" role="alert">{error}</div>}
       <div className="onboarding-actions"><Button type="submit" loading={busy} className="auth-submit">Ouvrir mon tableau de bord <ArrowRight size={17}/></Button></div>
      </form>

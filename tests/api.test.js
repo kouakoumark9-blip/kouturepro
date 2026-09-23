@@ -110,6 +110,10 @@ test('flux métier, isolation par atelier et balisage public',async()=>{
   expect(await req('/api/auth/login',{method:'POST',body:{identifier:email,password:oldPassword}}),401);
   const mailLogin=await req('/api/auth/login',{method:'POST',body:{identifier:'client@atelier.ci',password:newPassword}});expect(mailLogin,200);
   assert.equal(mailLogin.json.needs_onboarding,true);
-  assert.equal(expect(await req('/api/auth/me',{cookie:mailLogin.headers.get('set-cookie').split(';')[0]}),200).user.password_hash,undefined);
+  const emailCookie=mailLogin.headers.get('set-cookie').split(';')[0];
+  assert.equal(expect(await req('/api/auth/me',{cookie:emailCookie}),200).user.password_hash,undefined);
+  const mailOrg=expect(await req('/api/onboarding',{method:'POST',cookie:emailCookie,body:{name:'Atelier Mail',city:'Abidjan',whatsapp_phone:''}}),200).organization;
+  assert.equal(mailOrg.whatsapp_phone,'');
+  assert.equal(expect(await req('/api/bootstrap',{cookie:emailCookie}),200).organization.name,'Atelier Mail');
  }catch(error){console.error('SERVER LOG:',serverLog.slice(-3500));throw error;}finally{server.kill('SIGTERM');fs.rmSync(dir,{recursive:true,force:true});}
 });

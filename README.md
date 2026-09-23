@@ -15,7 +15,7 @@ npm install
 npm run dev
 ```
 
-Ouvrir **http://localhost:3000/auth** : choisissez **Connexion** ou **Inscription** avec votre e-mail **ou** votre téléphone et un mot de passe. Une connexion validée ouvre directement **votre propre tableau de bord** ; « Créer un compte » continue avec les quatre étapes d’inscription de l’atelier, puis ouvre son tableau de bord. L'application ne connecte plus automatiquement les visiteurs. Pour tester l’atelier « Atelier Koné » en développement, connectez-vous avec **`demo@kouturepro.test`** et **`Atelier2026!`** (ou la valeur de `DEMO_PASSWORD` si vous l’avez personnalisée). Le compte de démo ne peut pas se connecter en production. La vitrine publique reste accessible sur **http://localhost:3000/atelier-kone**.
+Ouvrir **http://localhost:3000/auth** : choisissez **Connexion** ou **Inscription** avec votre e-mail **ou** votre téléphone et un mot de passe. Une connexion validée ouvre directement **votre propre tableau de bord** ; « Créer un compte » mène à **une seule étape rapide** (nom et ville de l’atelier), puis ouvre le tableau de bord. L'application ne connecte plus automatiquement les visiteurs. Pour tester l’atelier « Atelier Koné » en développement, connectez-vous avec **`demo@kouturepro.test`** et **`Atelier2026!`** (ou la valeur de `DEMO_PASSWORD` si vous l’avez personnalisée). Le compte de démo ne peut pas se connecter en production. La vitrine publique reste accessible sur **http://localhost:3000/atelier-kone**.
 
 ### Générer une base de données fictive
 
@@ -47,7 +47,7 @@ Voir **[docs/deploiement-vercel.md](docs/deploiement-vercel.md)** pour la config
 
 La correspondance entre les dix rubriques de l'application, leurs routes et les tables Neon est détaillée dans [docs/modules-base-donnees.md](docs/modules-base-donnees.md).
 
-- Connexion ou inscription par e-mail ou téléphone et mot de passe (hachage bcrypt), puis onboarding en 4 étapes (nom et logo facultatif, localisation, spécialités, plan). Ancien écran de code SMS et entrée automatique dans la démo supprimés.
+- Connexion ou inscription par e-mail ou téléphone et mot de passe (hachage bcrypt). Après l’inscription, **une seule étape** demande le nom et la ville de l’atelier, puis ouvre le tableau de bord. WhatsApp est facultatif ; logo et spécialités se complètent ensuite dans Vitrine (gestion), avec le plan Starter au départ. Ancien écran de code SMS et entrée automatique dans la démo supprimés.
 - Clients, coordonnées chiffrées, mesures chiffrées modifiables, notes vocales chiffrées, rapprochement simple de mesures.
 - Commandes, tissu tiré du stock, patron réutilisable, cinq étapes de production, alertes, affectations et commissions par commande.
 - Espèces/virement, acomptes, solde, caisse, dépenses, reçus/factures PDF (téléchargement, lien privé valable 7 jours partageable sur WhatsApp) et plans d'épargne individuels.

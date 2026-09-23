@@ -1,4 +1,4 @@
-const CACHE='kouturepro-shell-v6';
+const CACHE='kouturepro-shell-v7';
 const ESSENTIAL=['/','/app','/favicon.svg','/icon-192.png','/icon-512.png','/manifest.webmanifest','/assets/atelier-hero.jpg','/assets/gallery-style.jpg','/assets/gallery-wax.jpg','/assets/gallery-studio.jpg'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>Promise.allSettled(ESSENTIAL.map(url=>cache.add(url)))));self.skipWaiting();});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim();});

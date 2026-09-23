@@ -66,15 +66,10 @@ try {
   await newcomer.getByLabel(/^Mot de passe/).fill('CoutureDash2026!');
   await newcomer.getByLabel(/^Confirmer le mot de passe/).fill('CoutureDash2026!');
   await newcomer.getByRole('button', { name: 'Créer mon compte' }).click();
-  await newcomer.getByRole('heading', { name: 'Comment s’appelle votre atelier ?' }).waitFor();
+  await newcomer.getByRole('heading', { name: 'Préparons votre atelier.' }).waitFor();
   await newcomer.getByLabel('Nom de votre atelier').fill('Atelier Premier');
-  await newcomer.getByRole('button', { name: /Continuer/ }).click();
   await newcomer.getByLabel('Ville').fill('Abidjan');
-  await newcomer.getByLabel('WhatsApp professionnel').fill('+2250701234545');
-  await newcomer.getByRole('button', { name: /Continuer/ }).click();
-  await newcomer.getByRole('button', { name: /Boubous & ensembles/ }).click();
-  await newcomer.getByRole('button', { name: /Continuer/ }).click();
-  await newcomer.getByRole('button', { name: 'Ouvrir mon tableau de bord' }).click();
+  await newcomer.getByRole('button', { name: /Ouvrir mon tableau de bord/ }).click();
   await newcomer.getByRole('heading', { name: 'Commençons ensemble.' }).waitFor();
   await newcomer.getByRole('heading', { name: 'Vos commandes apparaîtront ici' }).waitFor();
   assert.match(await newcomer.locator('.dashboard-page').innerText(), /0 FCFA/);

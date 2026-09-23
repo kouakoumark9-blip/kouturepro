@@ -27,24 +27,30 @@ try{
  await page.getByLabel(/^Mot de passe/).fill('CoutureTest2026!');
  await page.getByLabel(/^Confirmer le mot de passe/).fill('CoutureTest2026!');
  await page.getByRole('button',{name:'Créer mon compte'}).click();
- await page.getByRole('heading',{name:'Comment s’appelle votre atelier ?'}).waitFor();
- assert.equal(await page.getByText('Étape 2 sur 5').isVisible(),true,'L’inscription doit poursuivre ses étapes.');
+ await page.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
+ assert.equal(await page.getByText('Étape 2 sur 2').isVisible(),true,'Un nouvel inscrit doit passer à une seule étape avant son tableau de bord.');
+ // Si la navigation a été interrompue juste après la création du compte, une
+ // nouvelle tentative retrouve le compte au lieu de laisser l’utilisateur bloqué.
+ await page.goto(base+'/auth');await page.getByRole('tab',{name:'Inscription'}).click();
+ await page.getByLabel(/^Votre nom/).fill('Awa Test');
+ await page.getByLabel('E-mail ou numéro de téléphone').fill('AWA@EXEMPLE.CI');
+ await page.getByLabel(/^Mot de passe/).fill('CoutureTest2026!');
+ await page.getByLabel(/^Confirmer le mot de passe/).fill('CoutureTest2026!');
+ await page.getByRole('button',{name:'Créer mon compte'}).click();
+ await page.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
+ await page.reload();await page.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
  await page.getByLabel('Nom de votre atelier').fill('Maison des Étoiles');
- await page.getByRole('button',{name:/Continuer/}).click();
- await page.getByRole('heading',{name:'Où vous trouve-t-on ?'}).waitFor();
  await page.getByLabel('Ville').fill('Duekoué');
- await page.getByLabel('WhatsApp professionnel').fill('+2250701012345');
- await page.getByRole('button',{name:/Continuer/}).click();
- await page.getByRole('heading',{name:'Que créez-vous ?'}).waitFor();
- await page.getByRole('button',{name:/Boubous & ensembles/}).click();
- await page.getByRole('button',{name:/Continuer/}).click();
- await page.getByRole('heading',{name:'Un plan pour commencer.'}).waitFor();
- await page.getByRole('button',{name:'Ouvrir mon tableau de bord'}).click();
+ await page.getByRole('button',{name:/Ouvrir mon tableau de bord/}).click();
  await page.getByRole('heading',{name:/Bonjour Awa/}).waitFor();
  assert.equal(new URL(page.url()).pathname,'/app');
  const ownDashboard=await page.request.get(base+'/api/bootstrap');assert.equal(ownDashboard.status(),200);
- assert.equal((await ownDashboard.json()).organization.slug,'maison-des-etoiles','Chaque compte doit ouvrir son propre atelier.');
+ const ownData=await ownDashboard.json();
+ assert.equal(ownData.organization.slug,'maison-des-etoiles','Chaque compte doit ouvrir son propre atelier.');
+ assert.equal(ownData.organization.whatsapp_phone,'','WhatsApp n’est pas obligatoire pour un compte créé par e-mail.');
  const publicSite=await page.request.get(base+'/maison-des-etoiles');assert.equal(publicSite.status(),200);
+ await page.goto(base+'/maison-des-etoiles');await page.locator('.public-site').waitFor();
+ assert.equal(await page.getByRole('link',{name:/WhatsApp/}).count(),0,'Ne pas proposer un lien WhatsApp sans numéro.');
  await page.goto(base+'/app/settings');await page.getByRole('heading',{name:'Paramètres'}).waitFor();
  await page.locator('.logout-btn').click();await page.getByRole('tab',{name:'Connexion'}).waitFor();
  await page.goto(base+'/app');await page.getByRole('tab',{name:'Connexion'}).waitFor();
@@ -75,12 +81,25 @@ try{
  await phone.getByLabel(/^Mot de passe/).fill('CouturePhone2026!');
  await phone.getByLabel(/^Confirmer le mot de passe/).fill('CouturePhone2026!');
  await phone.getByRole('button',{name:'Créer mon compte'}).click();
- await phone.getByRole('heading',{name:'Comment s’appelle votre atelier ?'}).waitFor();
+ await phone.getByRole('heading',{name:'Préparons votre atelier.'}).waitFor();
  const me=await phone.request.get(base+'/api/auth/me');assert.equal(me.status(),200);const user=(await me.json()).user;
  assert.equal(user.phone,'+2250709090101');assert.equal(user.email,'');assert.equal(user.password_hash,undefined);
+ await phone.waitForFunction(()=>document.querySelector('input[type=tel]')?.value==='+2250709090101');
+ await phone.getByLabel('Nom de votre atelier').fill('Maison du Téléphone');
+ // La base confirme la création, mais la réponse se perd : le navigateur
+ // récupère l’atelier existant et ouvre quand même le tableau de bord.
+ await phone.route('**/api/onboarding',async route=>{
+  const response=await route.fetch();assert.equal(response.status(),200);
+  await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Atelier déjà créé.'})});
+ });
+ await phone.getByRole('button',{name:/Ouvrir mon tableau de bord/}).click();
+ await phone.getByRole('heading',{name:/Bonjour Fatou/}).waitFor();
+ await phone.unroute('**/api/onboarding');
+ const phoneData=await (await phone.request.get(base+'/api/bootstrap')).json();
+ assert.equal(phoneData.organization.whatsapp_phone,'+2250709090101','Préremplir le téléphone du propriétaire pour WhatsApp.');
  assert.deepEqual(errors,[]);
  console.log('✓ Sans session : Connexion / Inscription, aucun code ni démo automatique');
- console.log('✓ Inscription e-mail → onboarding → atelier → déconnexion → connexion');
- console.log('✓ Rechargement hors ligne et changement de mot de passe dans Paramètres');
- console.log('✓ Inscription téléphone sans code, identifiant normalisé');
+ console.log('✓ Inscription e-mail → étape unique facultative pour WhatsApp → tableau de bord');
+ console.log('✓ Reprise après inscription interrompue, rechargement et changement de mot de passe');
+ console.log('✓ Inscription téléphone → étape unique → tableau de bord, identifiant normalisé');
 }finally{if(browser)await browser.close();server.kill('SIGTERM');fs.rmSync(dir,{recursive:true,force:true});}

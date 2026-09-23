@@ -133,7 +133,9 @@ app.post('/api/auth/logout',api((req,res)=>{res.clearCookie('kp_session',{path:'
 app.get('/api/auth/me',api((req,res)=>{const user=getUser(req);if(!user)throw err(401,'Non connecté.');res.json({user:userOut(user),organization:user.org_id?orgOut(orgRow(user.org_id)):null});}));
 app.post('/api/onboarding',auth,api((req,res)=>{
  if(req.user.org_id)throw err(409,'Votre atelier est déjà créé.');
- const name=text(req.body.name,100),city=text(req.body.city,80),phone=normalizePhone(req.body.whatsapp_phone||req.user.phone);
+ const name=text(req.body.name,100),city=text(req.body.city,80);
+ const contact=req.body.whatsapp_phone===undefined?req.user.phone||'':req.body.whatsapp_phone;
+ const phone=contact?normalizePhone(contact):'';
  requireField(name,"Le nom de l'atelier");requireField(city,'La ville');
  let slug=text(req.body.slug||name,90).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
  if(slug.length<3)slug='atelier-'+crypto.randomInt(1000,9999);

@@ -111,7 +111,17 @@ export default function App(){
  const simulateOffline=(value)=>{localStorage.setItem('kp-offline-sim',value?'yes':'no');setForcedOffline(value);notify(value?'Mode hors ligne de test activé.':'Connexion rétablie.');};
  const values=useMemo(()=>({data,setData,ready,online:activeOnline,forcedOffline,simulateOffline,branch,setBranch,route,path,navigate,refresh,mutate,notify,pending,syncing,syncQueue,searchOpen,setSearchOpen,alertsOpen,setAlertsOpen,logout,quick,setQuick,mobileMore,setMobileMore,request:apiRequest}),[data,ready,activeOnline,forcedOffline,branch,route,navigate,refresh,mutate,notify,pending,syncing,syncQueue,searchOpen,alertsOpen,quick,mobileMore]);
  if(path!=='/'&&!inApp&&path!=='/auth'&&path!=='/onboarding')return <Context.Provider value={values}><PublicSite slug={path.split('/')[1]}/><Toasts toasts={toasts} remove={id=>setToasts(ts=>ts.filter(t=>t.id!==id))}/></Context.Provider>;
- if(path==='/auth'||path==='/onboarding')return <Context.Provider value={values}><Auth onboarding={path==='/onboarding'} onAuthenticated={async(result,mode)=>{sessionStorage.removeItem('kp-logged-out');localStorage.removeItem('kp-logout-pending');const cached=await getSnapshot();if(cached?.user?.id&&cached.user.id!==result.user.id){await clearSnapshot();await clearQueue();setPending(0);setData(null);}if(result.needs_onboarding){navigate('/onboarding');if(mode==='signup')notify('Compte créé ! Complétez maintenant les informations de votre atelier.');}else{await refresh();navigate('/app');}}}/><Toasts toasts={toasts} remove={id=>setToasts(ts=>ts.filter(t=>t.id!==id))}/></Context.Provider>;
+ if(path==='/auth'||path==='/onboarding')return <Context.Provider value={values}><Auth onboarding={path==='/onboarding'} onAuthenticated={async(result,mode)=>{
+  try{sessionStorage.removeItem('kp-logged-out');localStorage.removeItem('kp-logout-pending');}catch{}
+  const cached=await getSnapshot();
+  if(cached?.user?.id&&cached.user.id!==result.user.id){
+   await Promise.allSettled([clearSnapshot(),clearQueue()]);setPending(0);setData(null);
+  }
+  if(result.needs_onboarding){
+   navigate('/onboarding',true);
+   if(mode==='signup')notify('Compte créé ! Indiquez le nom et la ville de votre atelier pour ouvrir votre tableau de bord.');
+  }else{await refresh();navigate('/app',true);}
+ }}/><Toasts toasts={toasts} remove={id=>setToasts(ts=>ts.filter(t=>t.id!==id))}/></Context.Provider>;
  if(!ready||!data)return <Loading/>;
  const content=path==='/app'?<Dashboard/>:path==='/app/clients'?<Clients/>:path==='/app/orders'?<Orders/>:path.startsWith('/app/orders/')?<OrderDetail id={decodeURIComponent(path.split('/')[3])}/>:path==='/app/production'?<Production/>:path==='/app/payments'?<Payments/>:path==='/app/stock'?<Stock/>:path==='/app/team'?<Team/>:path==='/app/showcase'?<Showcase/>:path==='/app/stats'?<Stats/>:path==='/app/settings'?<Settings/>:<Dashboard/>;
  return <Context.Provider value={values}><div className="app-shell"><Sidebar/><div className="main-area"><Topbar/><main className="app-content">{content}</main></div><BottomNav/></div>

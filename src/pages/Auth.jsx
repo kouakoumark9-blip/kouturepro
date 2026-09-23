@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {Scissors,ArrowRight,Check,Sparkles,ShoppingBag,UsersRound,Building2,ShieldCheck,Camera,Eye,EyeOff} from 'lucide-react';
+import {Scissors,ArrowRight,Check,Sparkles,ShieldCheck,Eye,EyeOff} from 'lucide-react';
 import {useApp} from '../App.jsx';
 import {Button,Input} from '../components.jsx';
 
@@ -8,15 +8,20 @@ export default function Auth({onboarding,onAuthenticated}){
  const [mode,setMode]=useState('login');
  const [credentials,setCredentials]=useState({name:'',identifier:'',password:'',confirmation:''});
  const [showPassword,setShowPassword]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false);
- const [step,setStep]=useState(1),[logoFile,setLogoFile]=useState(null),[logoPreview,setLogoPreview]=useState('');
- const [form,setForm]=useState({name:'',owner_name:'',city:'Abidjan',address:'',whatsapp_phone:'',specialties:[],plan:'starter'});
- useEffect(()=>()=>{if(logoPreview)URL.revokeObjectURL(logoPreview);},[logoPreview]);
+ const [form,setForm]=useState({name:'',city:'Abidjan',whatsapp_phone:''});
  useEffect(()=>{
   if(!onboarding)return;
+  let active=true;
   request('/api/auth/me').then(r=>{
-   if(!r.user.org_id)setForm(f=>({...f,owner_name:r.user.name,whatsapp_phone:r.user.phone||''}));
-   else navigate('/app');
-  }).catch(()=>navigate('/auth'));
+   if(!active)return;
+   if(r.user.org_id){navigate('/app',true);return;}
+   setForm(f=>({...f,whatsapp_phone:f.whatsapp_phone||r.user.phone||''}));
+  }).catch(err=>{
+   if(!active)return;
+   if(err.status===401)navigate('/auth',true);
+   else setError('Impossible de vérifier votre session. Vérifiez la connexion et réessayez.');
+  });
+  return()=>{active=false;};
  },[onboarding,request,navigate]);
  const change=e=>{setCredentials({...credentials,[e.target.name]:e.target.value});setError('');};
  const switchMode=next=>{setMode(next);setCredentials(c=>({...c,password:'',confirmation:''}));setError('');setShowPassword(false);};
@@ -29,32 +34,39 @@ export default function Auth({onboarding,onAuthenticated}){
    if(localStorage.getItem('kp-logout-pending')==='yes'){
     await request('/api/auth/logout',{method:'POST'});localStorage.removeItem('kp-logout-pending');
    }
-   const result=await request(mode==='signup'?'/api/auth/signup':'/api/auth/login',{
-    method:'POST',body:{identifier:credentials.identifier,password:credentials.password,...(mode==='signup'?{name:credentials.name}:{})}
-   });
-   await onAuthenticated(result,mode);
+   let result,authMode=mode;
+   try{
+    result=await request(mode==='signup'?'/api/auth/signup':'/api/auth/login',{
+     method:'POST',body:{identifier:credentials.identifier,password:credentials.password,...(mode==='signup'?{name:credentials.name}:{})}
+    });
+   }catch(err){
+    if(mode!=='signup'||err.status!==409)throw err;
+    // Reprendre un compte déjà créé si la navigation vers l'étape suivante a échoué.
+    try{result=await request('/api/auth/login',{method:'POST',body:{identifier:credentials.identifier,password:credentials.password}});authMode='login';}
+    catch{throw new Error('Ce compte existe déjà. Ouvrez « Connexion » avec son mot de passe pour continuer.');}
+   }
+   if(result.needs_onboarding&&result.user?.phone)setForm(f=>({...f,whatsapp_phone:result.user.phone}));
+   await onAuthenticated(result,authMode);
   }catch(e){setError(e.network?'Connexion Internet nécessaire pour accéder à votre compte.':e.message);}
   finally{setBusy(false);}
  };
  const finish=async e=>{
-  e.preventDefault();
-  if(step<4){
-   if(step===1&&!form.name.trim())return notify('Donnez un nom à votre atelier.','error');
-   if(step===2&&!form.city.trim())return notify('Indiquez votre ville.','error');
-   setStep(step+1);return;
-  }
+  e.preventDefault();setError('');
+  if(!form.name.trim()||!form.city.trim()){setError('Indiquez le nom de votre atelier et sa ville.');return;}
   setBusy(true);
   try{
-   await request('/api/onboarding',{method:'POST',body:form});
-   if(logoFile){try{
-    const fd=new FormData();fd.append('image',logoFile);
-    const uploaded=await request('/api/uploads/image',{method:'POST',body:fd});
-    await request('/api/organization',{method:'PATCH',body:{logo_url:uploaded.url}});
-   }catch{notify('Atelier créé. Vous pourrez ajouter votre logo plus tard dans Ma vitrine.','error');}}
-   await refresh();navigate('/app');notify('Bienvenue dans votre atelier KouturePro !');
-  }catch(err){notify(err.message,'error');}finally{setBusy(false);}
+   try{await request('/api/onboarding',{method:'POST',body:form});}
+   catch(err){
+    if(err.status!==409)throw err;
+    // Si l'atelier a été créé mais la page n'a pas changé, reprendre sans doublon.
+    const me=await request('/api/auth/me');
+    if(!me.user.org_id)throw err;
+   }
+   try{await refresh();}catch{notify('Atelier créé. Chargement de vos données en cours...','error');}
+   navigate('/app',true);notify('Bienvenue dans votre atelier KouturePro !');
+  }catch(err){setError(err.network?'Connexion Internet nécessaire pour créer votre atelier.':err.message);}
+  finally{setBusy(false);}
  };
- const specs=['Tenues de cérémonie','Robes sur mesure','Boubous & ensembles','Mariages','Tenues traditionnelles','Retouches','Mode homme','Mode enfant'];
  return <div className="auth-layout">
   <div className="auth-visual"><img src="/assets/atelier-hero.jpg" alt="Atelier de couture en Afrique de l’Ouest"/><div className="auth-visual-shade"/>
    <div className="auth-brand"><span><Scissors size={22}/></span><strong>Kouture<span>Pro</span></strong><small>ENTERPRISE</small></div>
@@ -65,9 +77,9 @@ export default function Auth({onboarding,onAuthenticated}){
   <div className="auth-main"><div className="auth-mobile-brand"><span><Scissors size={20}/></span><strong>Kouture<span>Pro</span></strong></div>
    <div className="auth-form-shell">
     {!onboarding?<>
-     <div className="auth-overline">{mode==='login'?'VOTRE ESPACE ATELIER':'INSCRIPTION · ÉTAPE 1 SUR 5'}</div>
+     <div className="auth-overline">{mode==='login'?'VOTRE ESPACE ATELIER':'INSCRIPTION · ÉTAPE 1 SUR 2'}</div>
      <h2>{mode==='login'?'Bon retour à l’atelier.':'Créons votre espace.'}</h2>
-     <p className="auth-subtitle">{mode==='login'?'Entrez vos identifiants pour ouvrir directement votre tableau de bord.':'Créez vos accès, puis complétez les informations de votre atelier.'}</p>
+     <p className="auth-subtitle">{mode==='login'?'Entrez vos identifiants pour ouvrir directement votre tableau de bord.':'Créez votre compte. À l’étape suivante, indiquez le nom et la ville de votre atelier pour accéder au tableau de bord.'}</p>
      <div className="auth-tabs" role="tablist" aria-label="Accès à l’atelier">
       <button type="button" role="tab" aria-selected={mode==='login'} className={mode==='login'?'active':''} onClick={()=>switchMode('login')}>Connexion</button>
       <button type="button" role="tab" aria-selected={mode==='signup'} className={mode==='signup'?'active':''} onClick={()=>switchMode('signup')}>Inscription</button>
@@ -84,17 +96,16 @@ export default function Auth({onboarding,onAuthenticated}){
      <div className="auth-switch-line">{mode==='login'?<>Vous êtes nouveau ? <button type="button" onClick={()=>switchMode('signup')}>Créer un compte</button></>:<>Vous avez déjà un compte ? <button type="button" onClick={()=>switchMode('login')}>Se connecter</button></>}</div>
      <div className="auth-footnote"><ShieldCheck size={16}/> Vos données clients restent privées et protégées.</div>
     </>:<>
-     <div className="onboarding-top"><div className="auth-overline">INSCRIPTION · VOTRE ATELIER</div><span>Étape {step+1} sur 5</span></div>
-     <div className="onboarding-progress">{[1,2,3,4,5].map(i=><span key={i} className={i<=step+1?'active':''}/>)}</div>
-     <h2>{['Comment s’appelle votre atelier ?','Où vous trouve-t-on ?','Que créez-vous ?','Un plan pour commencer.'][step-1]}</h2>
-     <p className="auth-subtitle">{['Le début d’une belle histoire.','Aidez les clients près de chez vous à vous découvrir.','Choisissez ce qui vous ressemble le plus.','Vous pourrez changer de formule plus tard. Aucun paiement maintenant.'][step-1]}</p>
+     <div className="onboarding-top"><div className="auth-overline">INSCRIPTION · VOTRE ATELIER</div><span>Étape 2 sur 2</span></div>
+     <div className="onboarding-progress"><span className="active"/><span className="active"/></div>
+     <h2>Préparons votre atelier.</h2>
+     <p className="auth-subtitle">Deux informations suffisent pour commencer. Vous ajouterez votre logo, vos spécialités et WhatsApp plus tard dans la vitrine.</p>
      <form onSubmit={finish} className="auth-form onboarding-form">
-      {step===1&&<><Input label="Nom de votre atelier" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex. Atelier Koné" required autoFocus/><Input label="Votre nom" value={form.owner_name} onChange={e=>setForm({...form,owner_name:e.target.value})} placeholder="Ex. Awa Koné"/>
-       <label className="onboarding-logo-picker"><span>{logoFile?<img src={logoPreview} alt="Aperçu du logo"/>:<Camera size={21}/>}</span><span><strong>{logoFile?'Logo choisi':'Ajouter un logo'}</strong><small>Facultatif · vous pourrez le changer plus tard</small></span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>{const file=e.target.files?.[0]||null;setLogoFile(file);setLogoPreview(file?URL.createObjectURL(file):'');}}/></label></>}
-      {step===2&&<><Input label="Ville" value={form.city} onChange={e=>setForm({...form,city:e.target.value})} required/><Input label="Adresse / quartier" value={form.address} onChange={e=>setForm({...form,address:e.target.value})} placeholder="Ex. Cocody Deux Plateaux"/><Input label="WhatsApp professionnel" type="tel" value={form.whatsapp_phone} onChange={e=>setForm({...form,whatsapp_phone:e.target.value})} required placeholder="+225 ..."/></>}
-      {step===3&&<div className="specialty-choices">{specs.map(s=><button key={s} type="button" className={form.specialties.includes(s)?'selected':''} onClick={()=>setForm({...form,specialties:form.specialties.includes(s)?form.specialties.filter(x=>x!==s):[...form.specialties,s]})}>{form.specialties.includes(s)&&<Check size={15}/>} {s}</button>)}</div>}
-      {step===4&&<div className="plan-choices">{[['starter','Starter','Pour démarrer seul',ShoppingBag],['pro','Pro','Pour un atelier avec équipe',UsersRound],['business','Business','Pour plusieurs boutiques',Building2]].map(([id,label,desc,Icon])=><button key={id} type="button" className={form.plan===id?'selected':''} onClick={()=>setForm({...form,plan:id})}><span><Icon size={21}/></span><span><strong>{label}</strong><small>{desc}</small></span><i>{form.plan===id&&<Check size={16}/>}</i></button>)}</div>}
-      <div className="onboarding-actions">{step>1&&<Button variant="soft" type="button" onClick={()=>setStep(step-1)}>Retour</Button>}<Button type="submit" loading={busy} className="auth-submit">{step===4?'Ouvrir mon tableau de bord':'Continuer'} <ArrowRight size={17}/></Button></div>
+      <Input label="Nom de votre atelier" value={form.name} onChange={e=>{setForm({...form,name:e.target.value});setError('');}} placeholder="Ex. Atelier Koné" required autoFocus/>
+      <Input label="Ville" value={form.city} onChange={e=>{setForm({...form,city:e.target.value});setError('');}} placeholder="Ex. Abidjan" required/>
+      <Input label="WhatsApp professionnel (facultatif)" type="tel" value={form.whatsapp_phone} onChange={e=>{setForm({...form,whatsapp_phone:e.target.value});setError('');}} placeholder="+225 ..." hint="Vous pourrez l’ajouter ou le modifier dans Vitrine (gestion)."/>
+      {error&&<div className="auth-error" role="alert">{error}</div>}
+      <div className="onboarding-actions"><Button type="submit" loading={busy} className="auth-submit">Ouvrir mon tableau de bord <ArrowRight size={17}/></Button></div>
      </form>
     </>}
    </div><div className="auth-main-bottom">KouturePro Enterprise · Fait pour les mains qui créent.</div>

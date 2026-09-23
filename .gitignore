@@ -1,0 +1,22 @@
+# Dépendances, build et caches locaux
+node_modules/
+dist/
+.vite/
+.cache/
+.npm/
+.local/
+coverage/
+*.log
+
+# Identifiants et données privées — ne jamais publier
+.env
+.env.*
+!.env.example
+data/
+public/uploads/
+
+# Fichiers temporaires / propres à cet environnement
+tmp/
+.sudo_as_admin_successful
+apercu-*.png
+.DS_Store

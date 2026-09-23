@@ -407,7 +407,7 @@ app.post('/api/patterns',auth,withOrg,roles('owner','tailor'),api((req,res)=>{
 }));
 app.post('/api/branches',auth,withOrg,roles('owner'),api((req,res)=>{
  const id=recordId(req.body.id);if(db.prepare('SELECT id FROM branches WHERE id=? AND org_id=?').get(id,req.user.org_id))return res.json({item:row(req,'branches',id)});
- const name=text(req.body.name,100);requireField(name,'Le nom de la boutique');db.prepare('INSERT INTO branches (id,org_id,name,address,city,phone,created_at) VALUES (?,?,?,?,?,?,?)').run(id,req.user.org_id,name,text(req.body.address,150),text(req.body.city,100),text(req.body.phone,35),iso());res.status(201).json({item:row(req,'branches',id)});
+ const name=text(req.body.name,100);requireField(name,'Le nom de la succursale');db.prepare('INSERT INTO branches (id,org_id,name,address,city,phone,created_at) VALUES (?,?,?,?,?,?,?)').run(id,req.user.org_id,name,text(req.body.address,150),text(req.body.city,100),text(req.body.phone,35),iso());res.status(201).json({item:row(req,'branches',id)});
 }));
 app.post('/api/team',auth,withOrg,roles('owner'),api((req,res)=>{
  const {kind,value}=loginIdentifier(req.body.identifier),name=text(req.body.name,100),role=text(req.body.role,30),password=checkPassword(req.body.password);

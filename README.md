@@ -6,7 +6,7 @@ Application SaaS/PWA de gestion d'atelier de couture, en français et en FCFA, a
 
 ![Page de connexion KouturePro](docs/screenshots/connexion.png)
 
-[Inscription mobile](docs/screenshots/inscription-mobile.png) · [Tableau de bord connecté](docs/screenshots/tableau-de-bord.png) · [Tableau de bord Android](docs/screenshots/tableau-de-bord-mobile.png) · [Premiers pas après inscription](docs/screenshots/premiers-pas-mobile.png)
+[Inscription mobile](docs/screenshots/inscription-mobile.png) · [Tableau de bord et rubriques](docs/screenshots/modules-navigation.png) · [Menu des rubriques sur Android](docs/screenshots/modules-navigation-mobile.png) · [Premiers pas après inscription](docs/screenshots/premiers-pas-mobile.png)
 
 ## Essayer en local
 
@@ -29,6 +29,7 @@ La commande crée **`demo-data/kouturepro.sqlite`** avec un atelier, des clients
 - `npm test` : tests d'API sur des bases SQLite temporaires ; avec `TEST_POSTGRES_URL` pointant **uniquement vers une base PostgreSQL jetable**, exécute en plus les tests PostgreSQL (redémarrage, persistance, chiffrement, isolation par atelier, verrouillage de connexion).
 - `npm run test:auth` : parcours navigateur isolé Connexion / Inscription / hors ligne / changement de mot de passe (nécessite Chromium Playwright et `npm run build`).
 - `npm run test:dashboard` : tableau de bord mobile/ordinateur sur une base jetable, chiffres issus des paiements confirmés, premières étapes du nouvel atelier et action adaptée au rôle comptable.
+- `npm run test:modules` : les dix rubriques à 320, 390 et 1440 px, parcours interface → API → base SQLite isolée pour client, succursale, commande, acompte, production, stock et vitrine, ainsi que les permissions du couturier (nécessite Chromium Playwright et `npm run build`).
 - `npm run build` : construit le site de production et le Worker PostgreSQL autonome requis par la Function Vercel.
 - `SERVE_BUILD=1 npm run dev` : sert le build déjà créé avec la démo, sans lancer Vite (pratique sur un petit serveur de test).
 - `npm start` : sert le build de production après configuration des secrets ci-dessous.
@@ -43,6 +44,8 @@ Le premier compte réel se crée sur `/auth`. **À terminer avant des données c
 Voir **[docs/deploiement-vercel.md](docs/deploiement-vercel.md)** pour la configuration, les contrôles et les limites de charge. Aucun service Render n'est nécessaire.
 
 ## Parcours déjà utilisables
+
+La correspondance entre les dix rubriques de l'application, leurs routes et les tables Neon est détaillée dans [docs/modules-base-donnees.md](docs/modules-base-donnees.md).
 
 - Connexion ou inscription par e-mail ou téléphone et mot de passe (hachage bcrypt), puis onboarding en 4 étapes (nom et logo facultatif, localisation, spécialités, plan). Ancien écran de code SMS et entrée automatique dans la démo supprimés.
 - Clients, coordonnées chiffrées, mesures chiffrées modifiables, notes vocales chiffrées, rapprochement simple de mesures.

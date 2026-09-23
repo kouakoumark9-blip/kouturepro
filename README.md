@@ -6,7 +6,7 @@ Application SaaS/PWA de gestion d'atelier de couture, en français et en FCFA, a
 
 ![Page de connexion KouturePro](docs/screenshots/connexion.png)
 
-[Voir l’inscription mobile](docs/screenshots/inscription-mobile.png) · [Voir le tableau de bord après connexion](docs/screenshots/tableau-de-bord.png)
+[Inscription mobile](docs/screenshots/inscription-mobile.png) · [Tableau de bord connecté](docs/screenshots/tableau-de-bord.png) · [Tableau de bord Android](docs/screenshots/tableau-de-bord-mobile.png) · [Premiers pas après inscription](docs/screenshots/premiers-pas-mobile.png)
 
 ## Essayer en local
 
@@ -28,6 +28,7 @@ La commande crée **`demo-data/kouturepro.sqlite`** avec un atelier, des clients
 
 - `npm test` : tests d'API sur des bases SQLite temporaires ; avec `TEST_POSTGRES_URL` pointant **uniquement vers une base PostgreSQL jetable**, exécute en plus les tests PostgreSQL (redémarrage, persistance, chiffrement, isolation par atelier, verrouillage de connexion).
 - `npm run test:auth` : parcours navigateur isolé Connexion / Inscription / hors ligne / changement de mot de passe (nécessite Chromium Playwright et `npm run build`).
+- `npm run test:dashboard` : tableau de bord mobile/ordinateur sur une base jetable, chiffres issus des paiements confirmés, premières étapes du nouvel atelier et action adaptée au rôle comptable.
 - `npm run build` : construit le site de production et le Worker PostgreSQL autonome requis par la Function Vercel.
 - `SERVE_BUILD=1 npm run dev` : sert le build déjà créé avec la démo, sans lancer Vite (pratique sur un petit serveur de test).
 - `npm start` : sert le build de production après configuration des secrets ci-dessous.
@@ -48,7 +49,7 @@ Voir **[docs/deploiement-vercel.md](docs/deploiement-vercel.md)** pour les étap
 - Commandes, tissu tiré du stock, patron réutilisable, cinq étapes de production, alertes, affectations et commissions par commande.
 - Espèces/virement, acomptes, solde, caisse, dépenses, reçus/factures PDF (téléchargement, lien privé valable 7 jours partageable sur WhatsApp) et plans d'épargne individuels.
 - Stock, seuils, achats et fournisseurs ; équipe, rôles et plusieurs boutiques. Le propriétaire crée un membre avec un identifiant et un mot de passe initial, à lui communiquer en privé. Chaque membre peut changer son mot de passe dans Paramètres.
-- Tableau de bord, statistiques calculées sur les écritures réelles et indicateurs prudents de consommation de tissu.
+- Tableau de bord mobile/ordinateur avec encaissements réels, reste à encaisser, commandes, priorités, cinq étapes de production, stock et rendez-vous. Un atelier neuf voit un démarrage guidé sans chiffres fictifs. Les indicateurs ouvrent directement leurs fiches, au tactile ou au clavier.
 - Vitrine éditable et publique : galerie, avis, localisation, WhatsApp et demande de rendez-vous. Pages servies avec titre/meta, contenu HTML sans JavaScript, `LocalBusiness` + `Product` JSON-LD, sitemap et canonical.
 - PWA installable ; après une première connexion en ligne sur l’appareil, saisies et notes vocales possibles hors ligne via IndexedDB, synchronisation automatique avec détection des conflits de version. Connexion et inscription nécessitent Internet. Le mode « Simuler le mode hors ligne » dans Paramètres permet de tester sans couper internet.
 

@@ -36,3 +36,4 @@ jobs:
           TEST_POSTGRES_URL: postgresql://kp_test:test-only-not-production@127.0.0.1:55432/kp_test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:auth
+      - run: npm run test:dashboard

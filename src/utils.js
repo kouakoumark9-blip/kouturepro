@@ -2,6 +2,11 @@ export const fmt=(n)=>new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).f
 export const money=(n)=>fmt(n)+' FCFA';
 export const shortMoney=(n)=>{n=Number(n)||0;return n>=1e6?`${(n/1e6).toFixed(1).replace('.',',')} M`:n>=1e3?`${Math.round(n/1e3)} k`:fmt(n)};
 export const today=()=>new Date().toISOString().slice(0,10);
+// Use day 1 to avoid 31 March rolling forward when subtracting a month.
+export const previousMonth=(date=today())=>{
+ const [year,month]=date.slice(0,7).split('-').map(Number);
+ return new Date(Date.UTC(year,month-2,1)).toISOString().slice(0,7);
+};
 export const dateFR=(value,options={day:'numeric',month:'short',year:'numeric'})=>{if(!value)return '—';const d=new Date(value.length===10?value+'T12:00:00Z':value);return Number.isNaN(+d)?value:new Intl.DateTimeFormat('fr-FR',{...options,timeZone:'UTC'}).format(d);};
 export const dateLong=(value)=>dateFR(value,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 export const stages=['Mesures','Découpe','Assemblage','Essayage','Finition'];

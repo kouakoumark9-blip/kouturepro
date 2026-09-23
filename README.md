@@ -17,6 +17,15 @@ npm run dev
 
 Ouvrir **http://localhost:3000/auth** : choisissez **Connexion** ou **Inscription** avec votre e-mail **ou** votre téléphone et un mot de passe. Une connexion validée ouvre directement **votre propre tableau de bord** ; « Créer un compte » continue avec les quatre étapes d’inscription de l’atelier, puis ouvre son tableau de bord. L'application ne connecte plus automatiquement les visiteurs. Pour tester l’atelier « Atelier Koné » en développement, connectez-vous avec **`demo@kouturepro.test`** et **`Atelier2026!`** (ou la valeur de `DEMO_PASSWORD` si vous l’avez personnalisée). Le compte de démo ne peut pas se connecter en production. La vitrine publique reste accessible sur **http://localhost:3000/atelier-kone**.
 
+### Générer une base de données fictive
+
+```bash
+npm run demo:db
+DATA_DIR=demo-data npm run dev
+```
+
+La commande crée **`demo-data/kouturepro.sqlite`** avec un atelier, des clients, mensurations, commandes, paiements, tissus et membres fictifs. Son fichier **`demo-data/local-secrets.json`** est indispensable pour relire les champs chiffrés : gardez les deux fichiers ensemble. La base existante dans `data/` n'est ni copiée ni modifiée. Cette base de démonstration est réservée au **développement**, et ces fichiers sont exclus de Git ; seul le script de génération est publié.
+
 - `npm test` : test d'API sur une base temporaire et indépendante.
 - `npm run test:auth` : parcours navigateur isolé Connexion / Inscription / hors ligne / changement de mot de passe (nécessite Chromium Playwright et `npm run build`).
 - `npm run build` : construit le site de production.

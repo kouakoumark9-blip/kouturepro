@@ -313,5 +313,6 @@ async function dailyBackup() {
   } catch (error) { console.error('Database backup failed:', error.message); }
   finally { backupRunning = false; }
 }
-dailyBackup();
+// A generation script can await the first backup before safely closing SQLite.
+export const initialBackup = dailyBackup();
 setInterval(dailyBackup, 60 * 60 * 1000).unref();

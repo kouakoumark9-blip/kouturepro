@@ -13,10 +13,13 @@ coverage/
 .env.*
 !.env.example
 data/
+demo-data/
+base-fictive-*.zip
 public/uploads/
 
 # Fichiers temporaires / propres à cet environnement
 tmp/
+.ssh/
 .sudo_as_admin_successful
 apercu-*.png
 .DS_Store

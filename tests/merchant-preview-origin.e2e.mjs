@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 // Simulate Vercel's Preview origin while using only an isolated local SQLite DB.
-// Never point this test at Vercel or Neon Production.
+// Never point this test at Vercel or Neon Production. Check fail-closed guard
+// with a deliberately unroutable host BEFORE any PostgreSQL driver is loaded.
+const guard=spawnSync(process.execPath,['-e',"import('./server/db.js').catch(e=>{if(!e.message.includes('Base Preview non confirmée'))process.exit(2);console.log('guarded')})"],{
+ cwd:process.cwd(),encoding:'utf8',timeout:10000,env:{...process.env,VERCEL:'1',VERCEL_ENV:'preview',NODE_ENV:'production',
+ DATABASE_URL_UNPOOLED:'postgresql://must-not-connect.invalid/unsafe',KP_PREVIEW_DB_CONFIRMED:''}});
+assert.equal(guard.status,0,guard.stderr);
+assert.match(guard.stdout,/guarded/);
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'kp-preview-origin-'));
 const port=48600+crypto.randomInt(0,400),base=`http://127.0.0.1:${port}`;
 const preview='https://merchant-branch.example.test',production='https://kouturepro.example.test';

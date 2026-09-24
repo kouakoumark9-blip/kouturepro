@@ -7,6 +7,12 @@ import schema, { postgresMigrations } from './schema.js';
 import {seedCountryConfiguration} from './merchant-countries.js';
 
 export const hostedDb = process.env.VERCEL === '1' || process.env.USE_POSTGRES === '1';
+// The existing Vercel project exposes Neon variables to BOTH Preview and
+// Production. Fail closed before opening any connection/migration in Preview
+// unless an isolated Preview branch has explicitly been verified and enabled.
+if (process.env.VERCEL === '1' && process.env.VERCEL_ENV === 'preview' && process.env.KP_PREVIEW_DB_CONFIRMED !== '1') {
+  throw new Error('Base Preview non confirmée : configurez une branche Neon isolée avant d’activer KP_PREVIEW_DB_CONFIRMED=1. Aucun accès à la base Production.');
+}
 const production = process.env.NODE_ENV === 'production';
 const dataDir = path.resolve(process.env.DATA_DIR || 'data');
 const postgresUrl = process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL_NON_POOLING || process.env.DATABASE_URL || process.env.POSTGRES_URL;

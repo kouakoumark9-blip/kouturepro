@@ -18,7 +18,8 @@
     "test:responsive": "node tests/responsive.e2e.mjs",
     "test:merchant-ui": "node tests/merchant-ui.e2e.mjs",
     "test:merchant-api": "node tests/merchant-api.e2e.mjs",
-    "test:merchant-pwa": "node tests/merchant-pwa.e2e.mjs"
+    "test:merchant-pwa": "node tests/merchant-pwa.e2e.mjs",
+    "test:merchant-preview": "node tests/merchant-preview-origin.e2e.mjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

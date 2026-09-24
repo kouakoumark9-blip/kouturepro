@@ -15,7 +15,13 @@ import {db,hostedDb,sessionKey} from './db.js';
 const postgresUrl=process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL_NON_POOLING || process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const port=Number(process.env.PORT||3000);
 const production=process.env.NODE_ENV==='production';
-const canonical=(process.env.PUBLIC_BASE_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') || `http://127.0.0.1:${port}`).replace(/\/+$/,'');
+// Use the deployment-specific origin in Preview, not the Production domain;
+// Better Auth validates Origin and generates reset links against this URL.
+const previewOrigin=process.env.VERCEL_ENV==='preview'&&process.env.VERCEL_URL?`https://${process.env.VERCEL_URL}`:'';
+const vercelHost=process.env.VERCEL_ENV==='production'?
+  process.env.VERCEL_PROJECT_PRODUCTION_URL||process.env.VERCEL_URL:
+  process.env.VERCEL_URL||process.env.VERCEL_PROJECT_PRODUCTION_URL;
+const canonical=(previewOrigin || process.env.PUBLIC_BASE_URL || (vercelHost?`https://${vercelHost}`:'') || `http://127.0.0.1:${port}`).replace(/\/+$/,'');
 const preview=process.env.E2B_SANDBOX_ID?`https://${port}-${process.env.E2B_SANDBOX_ID}.e2b.app`:null;
 export const resetAvailable=Boolean(process.env.RESEND_API_KEY && process.env.RESET_FROM_EMAIL);
 const authSecret=crypto.createHmac('sha256',sessionKey).update('kouturepro-better-auth-v1').digest('hex');

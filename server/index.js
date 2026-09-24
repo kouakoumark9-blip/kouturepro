@@ -19,7 +19,10 @@ const port = Number(process.env.PORT || 3000);
 const demoMode = process.env.NODE_ENV !== 'production' && process.env.SEED_DEMO !== '0' &&
  (!hostedDb || (process.env.USE_POSTGRES === '1' && process.env.SEED_DEMO === '1'));
 const vercelHost = process.env.VERCEL_ENV === 'production' ? process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL : process.env.VERCEL_URL;
-const baseUrl = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || (vercelHost ? `https://${vercelHost}` : '')).replace(/\/+$/,'');
+// A Preview must generate Preview links, even when PUBLIC_BASE_URL is configured
+// for all environments. Never redirect a Preview reset/payment to Production.
+const previewOrigin = process.env.VERCEL_ENV === 'preview' && process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
+const baseUrl = (previewOrigin || process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || (vercelHost ? `https://${vercelHost}` : '')).replace(/\/+$/,'');
 if (process.env.NODE_ENV === 'production' && baseUrl) {
   let valid = false;
   try { const url = new URL(baseUrl); valid = url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash; } catch {}

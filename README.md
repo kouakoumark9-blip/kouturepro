@@ -1,94 +1,55 @@
 # KouturePro Enterprise
 
-Application SaaS/PWA de gestion d'atelier de couture, en français et en FCFA, avec vitrine publique par atelier. **Production : [kouturepro.vercel.app](https://kouturepro.vercel.app)** sur Vercel Functions + PostgreSQL (Neon) + Vercel Blob. Le 23 septembre 2026, le parcours inscription → nom et ville de l’atelier → tableau de bord → reconnexion a été vérifié sur le domaine public avec un compte temporaire, supprimé avec son atelier après le test ; la base Neon comporte 21 tables KouturePro et aucun atelier fictif. La base SQLite indépendante reste réservée au développement local ; elle n'est pas envoyée sur Vercel. **Avant de stocker de vraies données clients, prévoir une sauvegarde récupérable des clés de chiffrement hors Vercel** et consulter [le guide de déploiement Vercel](docs/deploiement-vercel.md).
+Application d’atelier de couture et portail marchand responsive, en français avec anglais disponible pour les nouveaux marchands. Le site existant est [kouturepro.vercel.app](https://kouturepro.vercel.app), hébergé sur **Vercel**, avec la base PostgreSQL **Neon existante** et Vercel Blob.
 
-## Aperçu
+> **État au 24 septembre 2026 :** l’ancien espace atelier est en ligne et `/api/health` y signale `database=ready`, mais **le nouveau portail marchand n’est pas encore publié** : `/api/merchant/countries` répond 404 et `/marchands.webmanifest` renvoie du HTML. Le code est préparé localement et testé sur des bases jetables ; voir [VALIDATION_MARCHANDS.md](VALIDATION_MARCHANDS.md). [Voici comment le mettre en ligne dans le projet existant](docs/deploiement-vercel.md). Ne pas interpréter le HTTP 200 de `/marchands` comme une preuve du déploiement.
 
-![Page de connexion KouturePro](docs/screenshots/connexion.png)
+## Deux espaces, sans suppression des données existantes
 
-[Inscription mobile](docs/screenshots/inscription-mobile.png) · [Tableau de bord et rubriques](docs/screenshots/modules-navigation.png) · [Menu des rubriques sur Android](docs/screenshots/modules-navigation-mobile.png) · [Premiers pas après inscription](docs/screenshots/premiers-pas-mobile.png)
+- **Atelier actuel `/app` et `/auth` :** dix rubriques (tableau de bord, clients, commandes, production, caisse, stock, équipe, vitrine, statistiques et paramètres), comptes existants, données chiffrées, vitrine publique SEO, PWA et synchronisation hors ligne. Ces comptes et commandes restent dans leurs tables actuelles.
+- **Nouveau portail `/marchands` :** inscription par e-mail et mot de passe avec Better Auth, pays/opérateurs configurables, téléphone E.164, devise liée au pays, rôles et invitations manuelles, clients avec consentement WhatsApp/SMS, commandes et liens privés `/pay/[token]` valables 48 h. Le client indique une référence, puis seul le marchand connecté peut confirmer manuellement après contrôle. Paiements **réels mais déclarés manuellement** ; messages WhatsApp/SMS **partagés manuellement**, jamais expédiés par l’application.
+- Les tables marchandes sont ajoutées à la base existante de manière additive ; les commandes atelier ne sont **pas** converties automatiquement en commandes marchandes. La suppression des données du compte marchand n’a pas encore son parcours complet. Les anciens raccourcis WhatsApp de l’espace atelier ne disposent pas tous d’une preuve de consentement, contrairement au nouveau portail : clarifier leur traitement avant une mise en conformité globale.
 
-## Essayer en local
+**Aucune clé d’API de paiement, CinetPay, Twilio ou WhatsApp Business n’est nécessaire.** Le mot de passe oublié *automatique par e-mail* fait exception : sans un compte d’envoi et `RESEND_API_KEY` + `RESET_FROM_EMAIL` sur Vercel, cette option est désactivée ; l’inscription et les paiements manuels continuent de fonctionner. Ne pas publier de secrets dans Git ou le chat.
 
-```bash
-npm install
-npm run dev
-```
+## Essayer localement
 
-Ouvrir **http://localhost:3000/auth** : choisissez **Connexion** ou **Inscription** avec votre e-mail **ou** votre téléphone et un mot de passe. Une connexion validée ouvre directement **votre propre tableau de bord** ; « Créer un compte » mène à **une seule étape rapide** (nom et ville de l’atelier), puis ouvre le tableau de bord. L'application ne connecte plus automatiquement les visiteurs. Pour tester l’atelier « Atelier Koné » en développement, connectez-vous avec **`demo@kouturepro.test`** et **`Atelier2026!`** (ou la valeur de `DEMO_PASSWORD` si vous l’avez personnalisée). Le compte de démo ne peut pas se connecter en production. La vitrine publique reste accessible sur **http://localhost:3000/atelier-kone**.
-
-### Générer une base de données fictive
+Node.js **22** est demandé par `package.json` :
 
 ```bash
-npm run demo:db
-DATA_DIR=demo-data npm run dev
+npm ci
+npm run build
+SEED_DEMO=0 npm run dev
 ```
 
-La commande crée **`demo-data/kouturepro.sqlite`** avec un atelier, des clients, mensurations, commandes, paiements, tissus et membres fictifs. Elle refuse d’écraser un dossier qui contient déjà une base ou une clé ; dans ce projet, `demo-data/` a déjà été généré. Son fichier **`demo-data/local-secrets.json`** est indispensable pour relire les champs chiffrés : gardez les deux fichiers ensemble. La base existante dans `data/` n'est ni copiée ni modifiée. Cette base de démonstration est réservée au **développement**, et ces fichiers sont exclus de Git ; seul le script de génération est publié.
+Ouvrir `http://localhost:3000/marchands`. En local, SQLite est utilisé par défaut ; cela **ne migre pas Neon Production**. Pour l’espace atelier existant, ouvrir `/auth`. Une base fictive indépendante existe pour les tests locaux (`npm run demo:db`) et ne doit jamais être importée en Production.
 
-- `npm test` : tests d'API sur des bases SQLite temporaires ; avec `TEST_POSTGRES_URL` pointant **uniquement vers une base PostgreSQL jetable**, exécute en plus les tests PostgreSQL (redémarrage, persistance, chiffrement, isolation par atelier, verrouillage de connexion).
-- `npm run test:auth` : parcours navigateur isolé Connexion / Inscription / hors ligne / changement de mot de passe (nécessite Chromium Playwright et `npm run build`).
-- `npm run test:dashboard` : tableau de bord mobile/ordinateur sur une base jetable, chiffres issus des paiements confirmés, premières étapes du nouvel atelier et action adaptée au rôle comptable.
-- `npm run test:responsive` : connexion, dix rubriques, étapes de production, formulaires et vitrine à 320–1 440 px (portrait/paysage) dans Chromium. Avec WebKit installé : `TEST_WEBKIT=1 RESPONSIVE_FULL=1 npm run test:responsive` pour vérifier le moteur Safari/iPhone/iPad. Toujours sur une base SQLite locale jetable.
-- `npm run test:modules` : les dix rubriques à 320, 390 et 1440 px, parcours interface → API → base SQLite isolée pour client, succursale, commande, acompte, production, stock et vitrine, ainsi que les permissions du couturier (nécessite Chromium Playwright et `npm run build`).
-- `npm run build` : construit le site de production et le Worker PostgreSQL autonome requis par la Function Vercel.
-- `SERVE_BUILD=1 npm run dev` : sert le build déjà créé avec la démo, sans lancer Vite (pratique sur un petit serveur de test).
-- `npm start` : sert le build de production après configuration des secrets ci-dessous.
-- `node tests/e2e.mjs` : parcours navigateur facultatif avec Playwright, **modifie les données de la démo** (installer Chromium et ses dépendances Playwright au préalable).
+Tests principaux (bases jetables, jamais Production) :
 
-## Production Vercel, Neon et Blob
+```bash
+npm test
+npm run test:auth
+npm run test:modules
+npm run test:responsive
+npm run test:merchant-api
+npm run test:merchant-ui
+npm run test:merchant-pwa
+npm run test:merchant-preview
+```
 
-**État vérifié le 23 septembre 2026 :** la production est servie sur **[kouturepro.vercel.app](https://kouturepro.vercel.app)**. `/api/health` répond `database: ready`, `/auth` fonctionne, les visites sans session n'ouvrent pas le tableau de bord. La Function s'est connectée à la base directe Neon `neondb` et y a créé **21 tables** dans le schéma `kouturepro` ; un contrôle SQL séparé a confirmé **0 atelier** après la migration. Le store Blob public `kouturepro-medias` (région Paris) a passé un test réel d'écriture, lecture et suppression. La base fictive locale n'a **pas** été importée. [SQL d'initialisation reproductible](database/initialiser-neon.sql) et [guide Neon](database/README.md).
+Les parcours WebKit acceptent `TEST_WEBKIT=1` et les tests PostgreSQL exigent une URL **loopback** de base `merchant_validation*` dédiée. Le moteur WebKit sous Linux avec profil iPhone ne remplace pas un essai sur un vrai Safari/iPhone ; le service d’e-mail des tests API est **intercepté**, aucun e-mail réel n’est envoyé. Voir [le détail des résultats](VALIDATION_MARCHANDS.md).
 
-Le premier compte réel se crée sur `/auth` (onglet **Inscription**). Indiquez un e-mail complet (avec `@`) ou un numéro valide, un mot de passe, puis uniquement le **nom et la ville de l’atelier**. Après création, le tableau de bord s’ouvre ; une session encore active le rouvre automatiquement au retour sur le site. Le test réel compte → atelier → tableau de bord → reconnexion a été effectué sur la production, puis ses données ont été supprimées. **À terminer avant des données clients sensibles :** conserver une copie récupérable de `APP_ENCRYPTION_KEY` hors Vercel (la clé et `SESSION_SECRET` ont été générées pour mettre en service une base vide ; Vercel masque les valeurs après enregistrement), organiser des sauvegardes Neon/Blob, puis tester également un vrai parcours client → commande → reconnexion. Ne jamais importer de base fictive sur Neon Production. Les moyens de paiement mobile nécessitent des accès marchands CinetPay actifs et une vérification réelle des opérateurs du contrat ; leur activation n'est pas confirmée par le simple déploiement.
+## Mettre en ligne sur le site existant
 
-Voir **[docs/deploiement-vercel.md](docs/deploiement-vercel.md)** pour la configuration, les contrôles et les limites de charge. Aucun service Render n'est nécessaire.
+Consulter [docs/deploiement-vercel.md](docs/deploiement-vercel.md) pour télécharger la livraison, pousser les sources sur le dépôt GitHub **existant** `kouakoumark9-blip/kouturepro`, contrôler la branche Neon Preview et la sauvegarde, puis fusionner dans `main` pour déclencher le déploiement du projet Vercel **existant**. Le paquet `kouturepro-marchands-release.zip` (téléchargeable dans l’espace de travail de cette conversation, pas dans Git) est une livraison de **code uniquement**, sans base, secret, build ou données fictives : il faut l’**extraire** dans une copie du dépôt, pas envoyer le ZIP seul à Vercel. Ne pas lancer les fichiers SQL du dossier `database/` manuellement sur Neon Production.
 
-## Parcours déjà utilisables
-
-La correspondance entre les dix rubriques de l'application, leurs routes et les tables Neon est détaillée dans [docs/modules-base-donnees.md](docs/modules-base-donnees.md).
-
-- Connexion ou inscription par e-mail ou téléphone et mot de passe (hachage bcrypt). Après l’inscription, **une seule étape** demande le nom et la ville de l’atelier, puis ouvre le tableau de bord. WhatsApp est facultatif ; logo et spécialités se complètent ensuite dans Vitrine (gestion), avec le plan Starter au départ. Ancien écran de code SMS et entrée automatique dans la démo supprimés.
-- Clients, coordonnées chiffrées, mesures chiffrées modifiables, notes vocales chiffrées, rapprochement simple de mesures.
-- Commandes, tissu tiré du stock, patron réutilisable, cinq étapes de production, alertes, affectations et commissions par commande.
-- Espèces/virement, acomptes, solde, caisse, dépenses, reçus/factures PDF (téléchargement, lien privé valable 7 jours partageable sur WhatsApp) et plans d'épargne individuels.
-- Stock, seuils, achats et fournisseurs ; équipe, rôles et plusieurs boutiques. Le propriétaire crée un membre avec un identifiant et un mot de passe initial, à lui communiquer en privé. Chaque membre peut changer son mot de passe dans Paramètres.
-- Tableau de bord adapté aux téléphones Android et iPhone, tablettes (portrait/paysage) et ordinateurs : menus et commandes tactiles lisibles, encoches et gestes système respectés, formulaires sans zoom automatique sur iOS, filtres et cinq étapes accessibles par balayage horizontal sans élargir toute la page. Les encaissements, priorités, stocks et rendez-vous proviennent des données réelles ; un atelier neuf voit un démarrage guidé sans chiffres fictifs.
-- Vitrine éditable et publique : galerie, avis, localisation, WhatsApp et demande de rendez-vous. Pages servies avec titre/meta, contenu HTML sans JavaScript, `LocalBusiness` + `Product` JSON-LD, sitemap et canonical.
-- PWA installable ; après une première connexion en ligne sur l’appareil, saisies et notes vocales possibles hors ligne via IndexedDB, synchronisation automatique avec détection des conflits de version. Connexion et inscription nécessitent Internet. Le mode « Simuler le mode hors ligne » dans Paramètres permet de tester sans couper internet.
-
-## Activer les services réels
-
-Copier `.env.example` vers `.env` puis remplir les identifiants nécessaires. Le serveur charge automatiquement `.env`.
-
-| Service | Variables | Comportement sans identifiants |
-| --- | --- | --- |
-| Rappels SMS | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Les rappels SMS sont désactivés ; la connexion n’utilise pas de code SMS. |
-| Mobile money | `CINETPAY_API_KEY`, `CINETPAY_SITE_ID`, `PUBLIC_BASE_URL` | L'encaissement mobile est **désactivé** : aucun faux paiement n'est créé. |
-| WhatsApp intégré | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_TEMPLATE_NAME` | Le bouton ouvre WhatsApp avec un message prérempli, sans prétendre l'envoyer automatiquement. |
-
-Depuis une commande, « Partager la facture » crée un lien PDF privé signé, consultable sans compte pendant 7 jours. Vous pouvez le copier ou ouvrir WhatsApp avec le lien prérempli ; **ce dernier geste ne l’envoie pas automatiquement**. Si WhatsApp Cloud API est configuré, l’envoi direct du PDF est aussi proposé, sous réserve d’une conversation client active (fenêtre Meta de 24 h) et d’une URL HTTPS publique (`PUBLIC_BASE_URL`) accessible par Meta. Un échec reste signalé comme échec, sans fausse confirmation. Ne transmettez ce lien confidentiel qu’au client concerné. Le flux CinetPay crée une transaction en attente et ouvre son véritable lien de paiement ; le serveur vérifie **montant, devise et statut** auprès du prestataire sur notification ou demande de vérification, avant de marquer le paiement comme reçu. Le guichet propose les opérateurs effectivement activés dans le contrat marchand ; choisir « Wave », « Orange Money » ou « MTN Money » dans l'interface ne garantit pas à lui seul la disponibilité de cet opérateur. Le `PUBLIC_BASE_URL` doit être une URL HTTPS publique joignable pour le webhook. Les rappels SMS/WhatsApp sont programmés pour l'essayage, le retrait et certains soldes impayés, après activation volontaire dans Paramètres et configuration des accès ; un modèle WhatsApp approuvé en français avec 3 variables est nécessaire.
-
-**Important :** une démonstration locale ne peut pas encaisser du vrai mobile money ni envoyer de vrais SMS/WhatsApp sans contrats et secrets marchands. Ces connexions ne sont pas simulées comme réussies.
-
-## Sécurité & exploitation
-
-Les mots de passe sont hachés avec bcrypt et ne sont jamais renvoyés par l’API. Les sessions préexistantes créées avec le code SMS sont invalidées. **Migration :** si un compte créé avant cette mise à jour n’a pas de mot de passe, un administrateur disposant d’un accès au serveur doit exécuter `node server/reset-password.js <e-mail-ou-numéro>` (ou fournir `RESET_PASSWORD` dans son environnement) et transmettre le nouveau mot de passe en privé. Aucun visiteur ne peut s’approprier un ancien compte sur la seule connaissance de son numéro. Pour les membres, le propriétaire peut aussi réinitialiser le mot de passe depuis « Équipe & boutiques ». Cette version ne vérifie pas encore la possession de l’e-mail ou du téléphone lors de l’inscription et ne propose pas de récupération autonome du mot de passe : la réinitialisation d’un propriétaire passe par l’administrateur du serveur.
-
-En production, `APP_ENCRYPTION_KEY` et `SESSION_SECRET` sont obligatoires (deux secrets distincts, par exemple `openssl rand -hex 32`). **Ne perdez pas `APP_ENCRYPTION_KEY`** : elle sert au déchiffrement des mesures, des coordonnées clients et des notes vocales. En développement, une clé locale est créée dans `data/local-secrets.json`. Sessions en cookie HTTP-only/SameSite, séparation des données par atelier, permissions API et protection des écritures contre les formulaires intersites.
-
-**Sur Vercel**, les données sont conservées dans PostgreSQL, isolées dans le schéma `kouturepro`, et les fichiers dans Vercel Blob ; **aucune base ni aucun média client n'est écrit sur le disque éphémère Vercel**. Mettre en place des sauvegardes/une politique de restauration PostgreSQL et Blob auprès des fournisseurs et conserver les secrets de chiffrement hors de Vercel. Ne jamais faire tourner les tests PostgreSQL sur la base de production. Le connecteur PostgreSQL synchrone exécute les requêtes dans un Worker dédié, mais **bloque la boucle d'événements de la Function pendant l'attente** : adapté au démarrage/pilotage à charge modérée, à remplacer par des accès asynchrones pour une forte concurrence. Les migrations sont actuellement lancées au démarrage et protégées contre les démarrages concurrents.
-
-**En local, hors Vercel**, SQLite fonctionne en mode WAL avec sauvegarde cohérente **une fois par jour**, conservation des sept dernières copies dans `DATA_DIR/backups/`. Sauvegarder également tout `DATA_DIR` (notamment `uploads/` et `public-uploads/`), ainsi que la clé de chiffrement. Ne pas publier `.env`.
+Conserver les secrets Vercel actuels `APP_ENCRYPTION_KEY` et `SESSION_SECRET` : les changer pourrait rendre des données existantes illisibles ou invalider des sessions. Prévoir une sauvegarde restaurable de Neon et des clés ; conserver Vercel Blob lié. Le déploiement ne prouve pas à lui seul la délivrabilité e-mail, l’installation sur iPhone ou le bon fonctionnement du stockage QR sur Blob.
 
 ## Architecture
 
-- Front : React, Vite, Tailwind CSS, Lucide, polices hébergées localement ; CSS mobile-first, manifest et service worker.
-- Back : Express (Function Vercel exportée par `api/index.js`), API REST, AES-256-GCM pour les données sensibles, PDFKit ; Node.js 22.
-- Vercel : PostgreSQL direct, schéma `kouturepro`, Blob public pour les images de vitrine et Blob contenant uniquement le **chiffrement** de l'audio privé ; l'API authentifiée déchiffre les notes vocales. Les limites de connexion sont partagées via PostgreSQL entre Functions. Rappels via Vercel Cron quotidien et `CRON_SECRET`.
-- Local : SQLite `better-sqlite3` dans `DATA_DIR/kouturepro.sqlite` ; instantanés quotidiens dans `DATA_DIR/backups/`, médias et audio dans `DATA_DIR/`. La base fictive reste indépendante.
-- Hors ligne : coque PWA mise en cache, instantané local et file d'écritures IndexedDB ; rejeu dans l'ordre à la reconnexion et choix explicite lorsque deux versions ont été modifiées.
+- Interface React, Vite, Tailwind CSS et Lucide, avec manifest/service worker PWA. Portail marchand français/anglais, responsive, file hors ligne IndexedDB chiffrée et indicateur de synchronisation.
+- API Express dans la Function Vercel `api/index.js`, PostgreSQL Neon direct en Production, SQLite uniquement pour le développement. Les données sensibles de l’ancien atelier restent chiffrées ; les tables marchandes sont cloisonnées par entreprise et les jetons privés sont hachés.
+- Authentification marchande Better Auth, sessions en cookies HttpOnly, mot de passe haché bcrypt, limitations d’essais. Réinitialisation par e-mail uniquement si un expéditeur externe autorisé est configuré. **Ne jamais afficher ou transmettre les mots de passe des utilisateurs.**
+- Documents, vitrine publique et dix modules atelier existants conservés ; le guide des anciens modules est dans [docs/modules-base-donnees.md](docs/modules-base-donnees.md). Images de vitrine/QR à valider avec le store Vercel Blob connecté au projet.
 
-## Périmètre transparent
-
-Le plan Starter/Pro/Business est enregistré, mais l'abonnement SaaS n'encaisse pas encore de facturation récurrente. L'épargne intégrée est **individuelle** et distincte du paiement d'une commande ; une tontine collective réglementée n'est pas mise en place. La prévision de stock utilise la moyenne récente et signale les limites de l'historique, sans annoncer une précision saisonnière non justifiée. Les traductions dioula/baoulé/nouchi ne sont pas incluses dans cette version française.
+Cette livraison n’installe pas automatiquement un moyen d’encaissement : elle affiche le numéro/QR du marchand pour que le client effectue un **vrai paiement hors de l’application**, puis demande une vérification humaine de la référence. Aucun bouton ne doit être interprété comme une confirmation automatique de fonds reçus.

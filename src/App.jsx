@@ -15,6 +15,7 @@ import Stats from './pages/Stats.jsx';
 import Settings from './pages/Settings.jsx';
 import PublicSite from './pages/PublicSite.jsx';
 import Auth from './pages/Auth.jsx';
+import MerchantPortal,{ManualPaymentPage} from './pages/MerchantPortal.jsx';
 
 const Context=createContext(null);
 export const useApp=()=>useContext(Context);
@@ -113,6 +114,8 @@ export default function App(){
  };
  const simulateOffline=(value)=>{localStorage.setItem('kp-offline-sim',value?'yes':'no');setForcedOffline(value);notify(value?'Mode hors ligne de test activé.':'Connexion rétablie.');};
  const values=useMemo(()=>({data,setData,ready,online:activeOnline,forcedOffline,simulateOffline,branch,setBranch,route,path,navigate,refresh,mutate,notify,pending,syncing,syncQueue,searchOpen,setSearchOpen,alertsOpen,setAlertsOpen,logout,quick,setQuick,mobileMore,setMobileMore,request:apiRequest}),[data,ready,activeOnline,forcedOffline,branch,route,navigate,refresh,mutate,notify,pending,syncing,syncQueue,searchOpen,alertsOpen,quick,mobileMore]);
+ if(path==='/marchands'||path.startsWith('/marchands/'))return <MerchantPortal/>;
+ if(/^\/pay\/[^/]+$/.test(path))return <ManualPaymentPage token={decodeURIComponent(path.split('/')[2])}/>;
  if(path!=='/'&&!inApp&&path!=='/auth'&&path!=='/onboarding')return <Context.Provider value={values}><PublicSite slug={path.split('/')[1]}/><Toasts toasts={toasts} remove={id=>setToasts(ts=>ts.filter(t=>t.id!==id))}/></Context.Provider>;
  if(path==='/auth'||path==='/onboarding')return <Context.Provider value={values}><Auth onboarding={path==='/onboarding'} onAuthenticated={async(result,mode)=>{
   try{sessionStorage.removeItem('kp-logged-out');localStorage.removeItem('kp-logout-pending');}catch{}

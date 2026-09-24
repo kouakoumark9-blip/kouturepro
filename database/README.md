@@ -1,23 +1,14 @@
-# Tables KouturePro dans Neon
+# Schémas KouturePro dans la base Neon existante
 
-**État vérifié le 23 septembre 2026 :** la première requête à l’API déployée sur Vercel a appliqué ce schéma à la base Neon directe `neondb` du projet `kouturepro`. Un contrôle SQL distinct a confirmé **21 tables dans `kouturepro` et 0 atelier** ; aucune base fictive n’a été importée. Les instructions ci-dessous servent à reproduire l’initialisation sur une **autre branche/base**, pas à recréer la Production déjà initialisée.
+**Situation au 24 septembre 2026 :** `kouturepro.vercel.app` utilise déjà Neon et l’espace atelier existant. Les nouvelles tables marchandes et le schéma `merchant_auth` ne sont **pas encore déployés ni validés sur Neon Production**. Le fait que `/api/health` réponde `database=ready` ne valide pas leur présence : `/api/merchant/countries` renvoie encore 404 sur le site en ligne.
 
-**À distinguer :** Neon Auth et son URL JWKS servent à l'authentification ; ils ne donnent pas accès à la base PostgreSQL. Le projet KouturePro utilise actuellement sa propre connexion par e-mail **ou** téléphone et mot de passe. Le SQL ci-dessous crée ses tables dans le schéma `kouturepro` d'une **base Neon déjà existante** ; il ne crée pas un nouveau projet Neon, ne modifie pas les tables Neon Auth et ne transfère pas la base fictive vers la production.
+## Déploiement de la nouvelle version
 
-## Base réelle : 21 tables, aucune donnée fictive
+1. Conserver **la même base Neon Production** et ses variables Vercel ; ne pas créer une nouvelle base Production ni importer de données fictives.
+2. Avant de publier, effectuer et tester une sauvegarde restaurable. Contrôler les comptes e-mail existants et les conflits éventuels lors de l’import Better Auth. Les migrations du serveur ajoutent automatiquement les nouveaux schémas et tables au premier démarrage, sous verrou PostgreSQL ; elles ne suppriment pas les comptes, commandes et tables atelier existants.
+3. **Ne pas coller ni exécuter `initialiser-neon.sql` ou `proposition-marchands-neon.sql` dans l’éditeur SQL de Neon Production.** Ce sont des références générées/provisoires, pas une opération à répéter sur la base active. Un déploiement de Preview peut utiliser une **branche de base Neon non productive** du même projet avec une URL dédiée.
+4. Vérifier après déploiement `/api/health`, `/api/merchant/countries`, les parcours autorisés et les journaux Vercel. Consulter [le guide de déploiement](../docs/deploiement-vercel.md) et [la validation locale](../VALIDATION_MARCHANDS.md).
 
-1. Ouvrir [la console Neon](https://console.neon.tech/), sélectionner **le projet PostgreSQL connecté à KouturePro**, puis **Postgres database → SQL Editor**.
-2. Choisir **la branche Production** et **la base utilisée par Vercel** (souvent `neondb`). Confirmer ce choix avant de toucher une base qui contient déjà des données. Si nécessaire, créer au préalable une sauvegarde / branche de restauration.
-3. Ouvrir [initialiser-neon.sql](initialiser-neon.sql), **copier tout le contenu** dans l'éditeur SQL, puis cliquer sur **Run**. Le script est transactionnel et idempotent pour un schéma KouturePro de cette version. Il utilise un verrou compatible avec le démarrage simultané de l'API. Il n'efface aucune table et n'insère aucun compte.
-4. Lire les deux derniers résultats : **`tables_kouturepro = 21`** et, si c'est vraiment une nouvelle base, **`ateliers_deja_presents = 0`**. Si des données sont déjà présentes, ce second chiffre peut être supérieur à zéro : **ne les supprimez pas**. En cas d'erreur de permissions, arrêter et vérifier que le rôle SQL a le droit de créer un schéma.
-5. Dans **Vercel → Settings → Environment Variables**, vérifier que `DATABASE_URL_UNPOOLED` pointe vers **cette même branche et cette même base** ; ne copiez pas cette URL contenant un mot de passe dans le chat ou le dépôt. Sur un déploiement Vercel, l'application appliquerait aussi ce schéma automatiquement au premier démarrage, mais elle n'a pas encore été publiée ni vérifiée en ligne.
+## Bases fictives
 
-Vous pouvez créer une **branche Neon Preview distincte** puis rejouer `initialiser-neon.sql` sur cette branche pour tester sans modifier la Production. Pour générer une nouvelle version du SQL à partir du code de l'application, lancer `npm run db:sql` ; le fichier suit `server/schema.js` et les migrations PostgreSQL utilisées au démarrage.
-
-## Base fictive indépendante
-
-- `base-fictive-kouturepro-postgresql.zip` (à la racine de **cet espace de travail**, non publié sur GitHub) contient une sauvegarde PostgreSQL **réservée au développement local**, avec un guide et une clé de déchiffrement **fictive** ; import et déchiffrement testés sur une base locale séparée. **Ne jamais l'importer dans Neon Production**.
-- `base-fictive-kouturepro.zip` (également disponible dans cet espace de travail) contient la version SQLite indépendante.
-- Les deux sont des exemples distincts des données de vos futurs clients. Aucun utilisateur de démonstration n'est créé par `initialiser-neon.sql`.
-
-Documentation officielle : [Neon SQL Editor](https://neon.com/docs/get-started/query-with-neon-sql-editor) et [intégration Neon/Vercel](https://neon.com/docs/guides/vercel-managed-integration).
+`base-fictive-kouturepro-postgresql.zip`, `base-fictive-kouturepro.zip`, `demo-data/` et `data/` appartiennent au **développement local**. Aucun de ces fichiers ne doit être importé dans Neon Production ou copié dans la livraison Vercel. Les tests PostgreSQL utilisent uniquement `127.0.0.1` et une base jetable nommée `merchant_validation*`.

@@ -4,12 +4,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import schema, { postgresMigrations } from '../server/schema.js';
 
 const tableCount = (schema.match(/^CREATE TABLE IF NOT EXISTS /gm) || []).length;
-const sql = `-- KouturePro : initialisation du schéma PostgreSQL dans une base Neon EXISTANTE.
--- À exécuter dans l'éditeur SQL Neon de la bonne branche/base (Production ou Preview).
--- N'exécutez pas ce script dans une autre application par erreur. Sauvegardez une
--- base ayant déjà des données avant toute migration. Ne crée AUCUN compte fictif.
--- Les tables d'authentification Neon restent intactes dans leur propre schéma.
--- Idempotent pour un schéma KouturePro créé avec cette version.
+const sql = `-- KouturePro : schéma de référence dans une base Neon EXISTANTE.
+-- NE PAS EXÉCUTER DIRECTEMENT SUR NEON PRODUCTION. Pour une revue ou un essai,
+-- utiliser uniquement une branche non productive, avec sauvegarde et droits SQL.
+-- La Function applique automatiquement les migrations additives au démarrage.
+-- Ne crée AUCUN compte fictif et ne modifie pas les tables Neon Auth.
 -- Généré automatiquement depuis server/schema.js par npm run db:sql.
 BEGIN;
 SELECT pg_advisory_xact_lock(7489201);

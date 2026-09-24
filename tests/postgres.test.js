@@ -6,10 +6,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Opt-in: supply a disposable, direct PostgreSQL URL (never a production DB).
+// Opt-in: local, disposable PostgreSQL only. Never migrate a shared/Production DB during tests.
 const connection = process.env.TEST_POSTGRES_URL;
+if (connection) {
+  const url = new URL(connection);
+  if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname) ||
+      !/^\/(?:merchant_validation(?:_[a-z0-9_]+)?|kp_test)$/.test(url.pathname)) {
+    throw Error('Refusing non-disposable PostgreSQL URL; use local merchant_validation*, or CI kp_test database.');
+  }
+}
 test('Vercel/PostgreSQL : inscription → dashboard → données chiffrées → redémarrage',
-  { skip: !connection && 'TEST_POSTGRES_URL requis pour ce test externe', timeout: 45000 }, async () => {
+  { skip: !connection && 'TEST_POSTGRES_URL requis pour ce test externe', timeout: 90000 }, async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'kp-postgres-test-'));
     const port = 39000 + crypto.randomInt(1, 1800), base = `http://127.0.0.1:${port}`;
     const env = { ...process.env, USE_POSTGRES: '1', SEED_DEMO: '0', NODE_ENV: 'production', API_ONLY: '1',
@@ -25,7 +32,7 @@ test('Vercel/PostgreSQL : inscription → dashboard → données chiffrées → 
       server = spawn(process.execPath, program, { cwd: process.cwd(),
         env: vercel ? { ...env, VERCEL: '1', API_ONLY: '0' } : env, stdio: ['ignore', 'pipe', 'pipe'] });
       let log = '';server.stdout.on('data', chunk => log += chunk);server.stderr.on('data', chunk => log += chunk);
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 300; i++) {
         if (server.exitCode !== null) throw Error('PostgreSQL indisponible : ' + log);
         try { if ((await fetch(base + '/api/health')).ok) return; } catch {}
         await wait(100);

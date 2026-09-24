@@ -2,6 +2,8 @@
 
 **Production :** [kouturepro.vercel.app](https://kouturepro.vercel.app). La base PostgreSQL Neon existante `neondb` comporte le schéma `kouturepro` et **21 tables**. L'API de production s'y connecte (`/api/health` : `database: ready`). Lors du contrôle du 23 septembre 2026, la base ne contenait **aucun atelier fictif**. On utilise cette base existante : **aucune deuxième base n'est créée, aucune table n'est supprimée et aucune donnée de démonstration n'est importée**. Le SQL de référence est [database/initialiser-neon.sql](../database/initialiser-neon.sql).
 
+> Cette page décrit **l’ancien espace atelier** (`/app`), pas le nouveau portail `/marchands`. Au 24 septembre 2026, les fonctions et tables marchandes ne sont pas publiées ; ne pas exécuter le SQL de référence manuellement sur la base de Production. Voir [le guide actuel](deploiement-vercel.md).
+
 | Rubrique | Adresse après connexion | Tables PostgreSQL utilisées | Ce qui est enregistré ou calculé |
 | --- | --- | --- | --- |
 | Tableau de bord | `/app` | `orders`, `payments`, `clients`, `fabrics`, `appointments`, `branches` | Indicateurs calculés à partir des paiements **confirmés**, commandes et priorités ; aucune table de chiffres factices. |

@@ -1,85 +1,66 @@
-# KouturePro — déploiement intégral sur Vercel
+# Mettre KouturePro Marchands en ligne sur le site existant
 
-> **État au 23 septembre 2026 :** [kouturepro.vercel.app](https://kouturepro.vercel.app) sert l’application sur le projet Vercel `kouturepro`. L’API a renvoyé `database: ready` ; la base Neon directe `neondb` contient **21 tables KouturePro et 0 atelier** après la première mise en service. Le store Blob public `kouturepro-medias` (Paris) a été relié à Production et vérifié par un test d’écriture, lecture et suppression. Les écrans de connexion et d’inscription ont été ouverts en production sans erreur JavaScript. Les parcours avec de vraies données clients et les paiements marchands ne sont pas encore validés. L’URL `vercel.com/.../kouturepro` reste la page d’administration, pas l’adresse publique du SaaS.
+**Situation au 24 septembre 2026 :** `https://kouturepro.vercel.app` héberge déjà l’ancien espace atelier. `/api/health` y répond `database=ready`, mais **`/api/merchant/countries` répond 404** et `/marchands.webmanifest` renvoie du HTML. Les nouvelles fonctions marchandes sont testées localement, **pas encore déployées**. Voir [la validation](../VALIDATION_MARCHANDS.md).
 
-## 1. Préparer le projet
+> Le 404 est une **route de notre propre serveur absente du déploiement**, pas une clé API extérieure à fournir. Aucun identifiant CinetPay, Twilio ou WhatsApp Business n’est nécessaire. Les paiements et messages du portail marchand sont manuels. Seul l’envoi *automatique* du courriel de mot de passe oublié nécessite un service d’e-mail configuré.
 
-- Source : `https://github.com/kouakoumark9-blip/kouturepro`, branche `main`. **Publier les changements de ce dossier** sur cette branche, puis vérifier qu’un nouveau déploiement apparaît dans **Vercel → Deployments**. Le commit initial ne contient pas la migration Vercel.
-- Dans **Vercel → Settings → Build and Deployment**, placer **Root Directory** à la racine du dépôt (pas `dist`), utiliser **Vite**, `npm run build` et **Output Directory `dist`**. Le fichier `vercel.json` configure la Function `api/index.js`, les rewrites API/pages et un Cron quotidien. `package.json` épingle **Node.js 22**.
-- Un build est nécessaire : il produit l’interface et `dist/pg-worker.mjs`, Worker PostgreSQL autonome inclus dans la Function. Le rendu serveur des vitrines lit aussi `dist/index.html`. Ne pas déployer `dist` seul.
+## 1. Mettre le code dans le dépôt GitHub existant
 
-## 2. Configurer PostgreSQL connecté à Vercel
+Le paquet `kouturepro-marchands-release.zip` est téléchargeable depuis l’espace de travail de cette conversation (il n’est pas commité dans Git) ; il contient le **code source**, pas une base de données ou des identifiants. **Il faut extraire les fichiers : envoyer le ZIP tel quel dans GitHub ou Vercel ne met pas l’application à jour.**
 
-Dans **Settings → Environment Variables** pour l’environnement **Production** :
-
-1. Confirmer que l’intégration Neon/PostgreSQL fournit **`DATABASE_URL_UNPOOLED`**. C’est l’URL **directe**, pas celle dont l’hôte contient `-pooler.`. L’application privilégie cette variable ; elle peut accepter `POSTGRES_URL_NON_POOLING` ou une `DATABASE_URL` non mutualisée. Une URL poolée Neon est refusée car les transactions et le `search_path` du schéma ne sont pas garantis derrière PgBouncer.
-2. Le compte PostgreSQL doit pouvoir créer un schéma et des tables. Avant le déploiement, vous pouvez exécuter [database/initialiser-neon.sql](../database/initialiser-neon.sql) dans **Neon → Postgres database → SQL Editor**, après avoir choisi la branche et la base de production : le dernier résultat doit indiquer **21 tables**. Guide : [database/README.md](../database/README.md). Au premier démarrage la Function crée sinon le schéma isolé **`kouturepro`** et ses tables automatiquement, dans une transaction protégée contre les démarrages concurrents. Les URL de Neon Auth et du JWKS ne constituent **pas** une connexion PostgreSQL. **Ne pas supprimer ce schéma** après création de comptes. Prévoir des sauvegardes et tester une restauration avec le fournisseur.
-3. Dans **Preview**, utiliser de préférence une **branche de base distincte** (fonction de l’intégration Neon), jamais la base de production pour essayer un déploiement. Les tests locaux automatisés demandent aussi une base PostgreSQL **jetable**, car ils y inscrivent de vrais enregistrements de test.
-4. Aucune base SQLite fictive n’est migrée automatiquement. Un nouveau projet démarre vide : le premier propriétaire doit s’inscrire à `/auth` et suivre l’onboarding. Ne pas importer `demo-data/`, `data/` ni `base-fictive-kouturepro.zip` dans la production.
-
-## 3. Configurer Vercel Blob connecté
-
-- Le projet et l’environnement **Production** sont reliés au store Blob **public** `kouturepro-medias` dans la région `cdg1` (Paris), nécessaire aux images de la vitrine. Le SDK utilise le `BLOB_READ_WRITE_TOKEN` injecté dans la Function. Une session CLI locale peut aussi utiliser `BLOB_STORE_ID` + un jeton `VERCEL_OIDC_TOKEN` du **même environnement** ; ne jamais inscrire ces jetons dans le dépôt.
-- Les photos de vitrine sont envoyées en Blob public ; seule une URL de photo envoyée **depuis le même atelier** peut ensuite être utilisée dans sa vitrine. Les notes vocales sont **chiffrées AES-256-GCM avant** le stockage Blob ; les octets du Blob ne sont pas un audio lisible. Leur lecture déchiffrée exige une session autorisée auprès de l’API. Pour une isolation stricte des objets eux-mêmes, prévoir un store privé séparé et adapter l’accès aux voix.
-- Un test dans une Function de production non promue a exercé `put()`, `get()` et `del()` sur un objet temporaire du store public : **réussi, objet supprimé**. Il reste à tester une photo et une note vocale **via l’interface déployée**, à les relire après actualisation et après un nouveau déploiement. `vercel env pull` masque les valeurs de type Secret ; le test depuis un poste local ne pourra utiliser que des identifiants autorisés de l’environnement correspondant. Si le store est privé ou déconnecté, l’envoi de la photo publique ne fonctionnera pas tel quel.
-- Les requêtes d’upload passent par la Function : limite applicative **4 Mio** par image et **3 Mio** par voix ; la limite du corps d’une requête Vercel est d’environ **4,5 Mo** (en-têtes multipart inclus). Pour des fichiers plus volumineux il faudrait basculer vers un upload Blob direct depuis le navigateur avec autorisation serveur.
-
-## 4. Configurer les secrets (Production)
-
-Créer des valeurs **différentes, longues et stables**, par exemple avec `openssl rand -hex 32`. Dans **Vercel → Settings → Environment Variables** :
-
-| Variable | Rôle |
-| --- | --- |
-| `APP_ENCRYPTION_KEY` | Chiffre mesures, coordonnées clients et notes vocales ; **ne jamais la perdre ni la faire varier entre redéploiements**. |
-| `SESSION_SECRET` | Signe les sessions et les liens privés de factures ; la modifier invalide les sessions/liens en cours. |
-| `CRON_SECRET` | Protège `/api/cron/reminders` ; Vercel envoie automatiquement `Authorization: Bearer <secret>` quand il appelle le Cron. |
-| `PUBLIC_BASE_URL` | Recommandée avec votre domaine HTTPS définitif, sans slash final. En son absence l’application utilise `VERCEL_PROJECT_PRODUCTION_URL` ou `VERCEL_URL` ; l’URL des webhooks de paiement doit être publiquement joignable. |
-
-**Attention aux clés :** `APP_ENCRYPTION_KEY` et `SESSION_SECRET` ont été générées distinctes et enregistrées en tant que Secrets Vercel lors de la première publication. La base ne contenait alors aucun atelier. Comme Vercel masque les valeurs après leur enregistrement, **aucune copie de récupération hors Vercel n’est actuellement garantie**. Avant d’accueillir de vraies données de clients, remplacez la clé de chiffrement dans une base encore vide par une clé conservée dans un coffre-fort indépendant ; ensuite, ne la changez plus sans procédure de rechiffrement des données. Sauvegardez aussi Neon et Blob. `CRON_SECRET` est configuré en Production, mais l’exécution quotidienne reste à observer.
-
-**Ne pas renseigner** `SEED_DEMO=1`, `DATA_DIR`, `USE_POSTGRES=1` ni des identifiants de la base locale dans Production. `VERCEL=1` est défini par la plateforme. Un compte fictif de démonstration est refusé en production.
-
-**Services facultatifs, réellement externes :** `CINETPAY_API_KEY`, `CINETPAY_SITE_ID` pour encaisser via CinetPay (Wave/Orange/MTN seulement si activés sur votre contrat marchand), `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` pour les SMS, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_TEMPLATE_NAME` pour les rappels et l’envoi direct des PDF WhatsApp. Sans ces contrats/secrets, aucun vrai paiement mobile, SMS ni message API n’est prétendu réussi. Pour CinetPay, vérifier en plus la réception du webhook et le changement d’état après vérification serveur du montant, de la devise et du statut.
-
-## 5. Tests préalables reproductibles
-
-Utiliser Node.js **22**, puis, depuis la racine du dépôt :
+Si vous disposez de Git sur votre ordinateur et des droits d’écriture sur `kouakoumark9-blip/kouturepro` :
 
 ```bash
+git clone https://github.com/kouakoumark9-blip/kouturepro.git
+cd kouturepro
+git switch -c feature/marchands-v2
+# Adapter le chemin du fichier téléchargé à votre ordinateur :
+unzip -o /chemin/vers/kouturepro-marchands-release.zip -d .
+rm RELEASE_REVISION.txt
 npm ci
-npm test
 npm run build
-npm run test:auth
+npm test
+npm run test:merchant-preview
+git add -A
+git commit -m "feat: portail marchands et paiements manuels"
+git push -u origin feature/marchands-v2
 ```
 
-Pour couvrir **PostgreSQL**, réserver une base dédiée et **non productive** et exécuter :
+Node.js **22** est requis par le projet. Si `git push` demande une connexion, authentifiez-vous dans GitHub avec **votre propre session** ; ne communiquez jamais le mot de passe ou un jeton dans le chat. Ouvrez ensuite une *pull request* de `feature/marchands-v2` vers `main`. Ne la fusionnez pas avant les vérifications ci-dessous. Si l’agent doit le faire à votre place, il lui faut une session d’écriture GitHub et une session Vercel autorisées **dans son environnement**, pas simplement votre connexion sur votre ordinateur.
 
-```bash
-TEST_POSTGRES_URL='postgresql://utilisateur:motdepasse@127.0.0.1:5432/kp_test' npm test
-```
+## 2. Contrôler le projet Vercel existant, sans en créer un second
 
-Ce test crée deux ateliers et vérifie la persistance après redémarrage, les données chiffrées, le cloisonnement par atelier et la limite de connexion partagée. Le workflow `.github/workflows/ci.yml` lance ces vérifications avec PostgreSQL 17 et Node 22 sur les prochaines publications. Si Chromium Playwright n’est pas installé localement : `npx playwright install chromium` avant `npm run test:auth`.
+Dans **Vercel → projet `kouturepro` → Settings → Git**, vérifier que le dépôt ci-dessus est relié et que la branche Production est `main`. Dans **Build and Deployment**, garder la racine du dépôt, le build `npm run build`, le répertoire de sortie `dist`, Node.js 22 et la Function `api/index.js` configurée par `vercel.json`. Une push sur la branche de travail doit créer un déploiement **Preview** ; la fusion dans `main` déclenche ensuite un déploiement **Production** si la liaison Git est active.
 
-## 6. Vérifications après déploiement (indispensables)
+Ne testez pas une Preview en la reliant à Neon **Production** : la Function applique les nouvelles migrations additives au premier démarrage et les tests créent des comptes/commandes. Le projet Vercel existant expose les variables Neon **aux deux environnements** ; cette livraison refuse donc par défaut toute connexion PostgreSQL en Preview. Pour ouvrir une Preview fonctionnelle, configurer une **branche de base Neon temporaire distincte** avec ses propres variables Preview, contrôler qu’elles ne ciblent pas Production, puis définir `KP_PREVIEW_DB_CONFIRMED=1` **uniquement en Preview**. Tant que ce contrôle n’est pas fait, une erreur de démarrage de la Preview est intentionnelle et protège Production. Le code utilise l’URL Vercel propre à la Preview pour l’authentification et les liens, même si `PUBLIC_BASE_URL` définit le domaine Production.
 
-Remplacer `<domaine>` par l’**URL de production affichée sous Deployments** (et non celle du tableau de bord d’administration `vercel.com/...`) :
+## 3. Protéger la base Neon et les secrets existants
 
-1. Ouvrir `https://<domaine>/api/health` : attendre `{"ok":true,"database":"ready",...}`. Si 500/503 : vérifier les logs de la Function, l’URL directe PostgreSQL, les droits et les secrets.
-2. Ouvrir `https://<domaine>/auth` sur Android ou à largeur mobile. Créer un **nouveau** compte avec e-mail ou téléphone + mot de passe, achever l’onboarding, puis constater l’ouverture du tableau de bord propre à l’atelier. Se déconnecter, se reconnecter : le tableau de bord doit s’ouvrir directement.
-3. Créer un client, une mensuration, une commande et un acompte ; actualiser, fermer/revenir, puis refaire un déploiement et vérifier que les données restent en place. Tester aussi une deuxième inscription pour vérifier l’isolation entre ateliers.
-4. Ajouter une photo à la vitrine ; ouvrir sa page publique `https://<domaine>/<slug>` et contrôler l’image, le `LocalBusiness`/`Product` dans le HTML, `robots.txt` et `sitemap.xml`. Ajouter puis relire une note vocale autorisée ; sans connexion, sa route API doit refuser l’accès.
-5. Sans l’en-tête secret, `GET /api/cron/reminders` doit retourner **401** ; contrôler ensuite le déclenchement quotidien à **08:00 UTC** dans Vercel et les logs d’envoi seulement si des rappels ont été activés/configurés.
-6. Si le paiement réel est activé, tester la redirection vers CinetPay et une transaction sur le compte marchand de test, puis vérifier le webhook et le rapprochement après validation serveur. Ne pas confondre un bouton Wave/Orange/MTN avec un paiement réellement accepté.
+Avant de fusionner, vérifier une sauvegarde restaurable de **la base Neon déjà connectée**, identifier l’atelier et les comptes existants et contrôler les éventuelles collisions d’e-mails lors de l’import Better Auth. Les schémas/tables nouveaux sont ajoutés au démarrage : **ne pas exécuter `database/initialiser-neon.sql` ni `database/proposition-marchands-neon.sql` manuellement en Production**. N’importer ni `data/`, ni `demo-data/`, ni les ZIP de bases fictives.
 
-Si une étape échoue, **ne pas annoncer la mise en ligne opérationnelle** : corriger, redéployer puis recommencer les vérifications. Les rewrites et le packaging ne sont validés définitivement que par un essai sur Vercel : une simulation locale de la Function a réussi, mais elle ne reproduit pas le CDN et les jetons Vercel réels.
+Dans **Vercel → Settings → Environment Variables → Production**, conserver les valeurs déjà utilisées pour :
 
-## 7. Exploitation et limites connues
+- `DATABASE_URL_UNPOOLED` : URL PostgreSQL **directe** de la base Neon existante, jamais `-pooler` ; ne pas la montrer dans le chat ;
+- `APP_ENCRYPTION_KEY` : **ne jamais remplacer** une clé ayant chiffré des données réelles, sous peine de les rendre illisibles ;
+- `SESSION_SECRET` : conserver la valeur existante pour les sessions et liens existants ;
+- l’intégration Vercel Blob déjà liée, pour les images de vitrine et les QR hébergés ;
+- `PUBLIC_BASE_URL=https://kouturepro.vercel.app` si une origine HTTPS canonique est nécessaire. Vérifier qu’elle n’envoie pas les liens Preview vers Production.
 
-- Le backend PostgreSQL utilise un Worker et un adaptateur synchrone pour conserver l’API métier existante. **Chaque requête SQL attendue bloque la boucle d’événements de la Function**. Un petit atelier/pilote fonctionne, mais une charge simultanée importante demande une refonte asynchrone et des tests de charge. Chaque instance ouvre une connexion directe ; surveiller la limite de connexions et les coûts Neon/Vercel.
-- Les uploads et l’authentification exigent une connexion réseau. Après une première connexion, le mode hors ligne permet des saisies locales et une synchronisation au retour du réseau, avec gestion des conflits ; les données non synchronisées restent sur l’appareil tant qu’elles n’ont pas été envoyées.
-- Les migrations sont appliquées au démarrage de la Function. Avant toute modification destructive d’un schéma en production, sauvegarder PostgreSQL et prévoir une migration versionnée. Sauvegarder également Blob et les clés de chiffrement **hors de l’environnement Vercel**.
-- La réinitialisation autonome du mot de passe propriétaire et la vérification de propriété d’un e-mail/numéro ne sont pas encore fournies. Les fonctionnalités de paiements/notifications nécessitent les contrats fournisseurs réels décrits ci-dessus.
+Ne définir **aucune** variable `CINETPAY_*`, `TWILIO_*` ou `WHATSAPP_*` : aucun fournisseur de paiement/messagerie n’est utilisé dans les nouveaux parcours. Ne pas définir `SEED_DEMO=1`, `USE_POSTGRES=1` ou `DATA_DIR` dans Vercel.
 
-## Documentation des intégrations
+Pour le mot de passe oublié par e-mail, un expéditeur vérifié reste nécessaire. En choisissant un service à palier gratuit comme Resend, renseigner `RESEND_API_KEY` et `RESET_FROM_EMAIL` **dans Vercel**, jamais dans Git. Tant qu’ils sont absents, l’inscription, les paiements manuels et les invitations fonctionnent ; **le mot de passe oublié automatique est désactivé**. Ne pas prétendre l’avoir validé en conditions réelles sans un e-mail effectivement reçu.
 
-- [1](https://vercel.com/docs/frameworks/backend/express) Vercel et Express ; [2](https://vercel.com/docs/project-configuration/vercel-json) configuration et rewrites ; [3](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions) versions Node.js ; [4](https://neon.com/docs/guides/vercel-managed-integration) variables Neon connectées ; [5](https://neon.com/docs/connect/connection-errors) restrictions PgBouncer ; [6](https://vercel.com/docs/vercel-blob/using-blob-sdk) Blob et OIDC ; [7](https://vercel.com/docs/cron-jobs/manage-cron-jobs) protection du Cron ; [8](https://vercel.com/docs/concepts/solutions/file-storage) limites de requête et stockage.
+## 4. Mettre en Production et vérifier
+
+Après vérification de la Preview sur une branche Neon non productive, accord sur la migration additive et sauvegarde de Production, fusionner la pull request dans `main`. Dans **Vercel → Deployments**, attendre un déploiement `Ready` correspondant au nouveau commit, puis vérifier **sur le vrai domaine** :
+
+1. `https://kouturepro.vercel.app/api/health` → HTTP 200 et `database=ready` ;
+2. `/api/merchant/countries` → HTTP 200 et **JSON** contenant les pays, au lieu du 404 actuel ;
+3. `/marchands.webmanifest` → HTTP 200 avec type **JSON/manifest**, au lieu du HTML actuel ;
+4. `/marchands` → inscription/connexion autorisée, devise liée au pays, clients et consentement ;
+5. `/pay/[token]` → lien 48 h, référence « J’ai payé », confirmation **uniquement** après vérification manuelle par le marchand connecté ;
+6. QR via Blob, essai sur appareils réels, e-mail de récupération seulement si Resend est configuré.
+
+N’ajoutez **aucun compte fictif en Production** pour les essais. Les anciens comptes/commandes restent dans l’espace atelier ; aucune migration destructive vers les nouvelles tables marchandes n’est prévue. La suppression des données du compte marchand et la mise en conformité des anciens raccourcis WhatsApp restent des sujets à traiter avant d’annoncer que toutes les exigences sont achevées.
+
+En cas d’échec, consulter les logs de Function dans Vercel et revenir au déploiement précédent si nécessaire ; **ne supprimer aucun schéma Neon pour “annuler” le code**, les migrations sont additives et les données existantes doivent rester intactes.

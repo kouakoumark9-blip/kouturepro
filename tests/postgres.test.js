@@ -11,8 +11,8 @@ const connection = process.env.TEST_POSTGRES_URL;
 if (connection) {
   const url = new URL(connection);
   if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname) ||
-      !/^\/merchant_validation(?:_[a-z0-9_]+)?$/.test(url.pathname)) {
-    throw Error('Refusing non-disposable PostgreSQL URL; use local merchant_validation or merchant_validation_* database.');
+      !/^\/(?:merchant_validation(?:_[a-z0-9_]+)?|kp_test)$/.test(url.pathname)) {
+    throw Error('Refusing non-disposable PostgreSQL URL; use local merchant_validation*, or CI kp_test database.');
   }
 }
 test('Vercel/PostgreSQL : inscription → dashboard → données chiffrées → redémarrage',

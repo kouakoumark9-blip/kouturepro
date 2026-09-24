@@ -2,7 +2,7 @@
 
 Application d’atelier de couture et portail marchand responsive, en français avec anglais disponible pour les nouveaux marchands. Le site existant est [kouturepro.vercel.app](https://kouturepro.vercel.app), hébergé sur **Vercel**, avec la base PostgreSQL **Neon existante** et Vercel Blob.
 
-> **État au 24 septembre 2026 :** l’ancien espace atelier est en ligne et `/api/health` y signale `database=ready`, mais **le nouveau portail marchand n’est pas encore publié** : `/api/merchant/countries` répond 404 et `/marchands.webmanifest` renvoie du HTML. Le code est préparé localement et testé sur des bases jetables ; voir [VALIDATION_MARCHANDS.md](VALIDATION_MARCHANDS.md). [Voici comment le mettre en ligne dans le projet existant](docs/deploiement-vercel.md). Ne pas interpréter le HTTP 200 de `/marchands` comme une preuve du déploiement.
+> **État au 24 septembre 2026, 11 h 45 UTC :** le portail marchand a été publié sur le site existant via la [pull request #1](https://github.com/kouakoumark9-blip/kouturepro/pull/1). `/api/health` signale `database=ready`, `/api/merchant/countries` renvoie **200 JSON et 16 pays**, et `/marchands.webmanifest` est un manifest JSON. L’ancien espace atelier et ses 12 vitrines publiques restent accessibles. **Mise en ligne ≠ validation complète des parcours connectés** : voir [VALIDATION_MARCHANDS.md](VALIDATION_MARCHANDS.md). [Guide de déploiement et d’exploitation](docs/deploiement-vercel.md).
 
 ## Deux espaces, sans suppression des données existantes
 
@@ -41,7 +41,7 @@ Les parcours WebKit acceptent `TEST_WEBKIT=1` et les tests PostgreSQL exigent un
 
 ## Mettre en ligne sur le site existant
 
-Consulter [docs/deploiement-vercel.md](docs/deploiement-vercel.md) pour télécharger la livraison, pousser les sources sur le dépôt GitHub **existant** `kouakoumark9-blip/kouturepro`, contrôler la branche Neon Preview et la sauvegarde, puis fusionner dans `main` pour déclencher le déploiement du projet Vercel **existant**. Le paquet `kouturepro-marchands-release.zip` (téléchargeable dans l’espace de travail de cette conversation, pas dans Git) est une livraison de **code uniquement**, sans base, secret, build ou données fictives : il faut l’**extraire** dans une copie du dépôt, pas envoyer le ZIP seul à Vercel. Ne pas lancer les fichiers SQL du dossier `database/` manuellement sur Neon Production.
+La première version marchande est **déjà fusionnée dans `main` et déployée** sur le projet Vercel existant. Consulter [docs/deploiement-vercel.md](docs/deploiement-vercel.md) pour les prochains déploiements, l’isolation Neon Preview, les sauvegardes et la vérification après publication. Le paquet `kouturepro-marchands-release.zip` dans l’espace de travail de cette conversation est un **archivage de code**, sans base, secret ni données fictives ; il n’est pas requis pour utiliser le site. Ne pas lancer les fichiers SQL du dossier `database/` manuellement sur Neon Production.
 
 Conserver les secrets Vercel actuels `APP_ENCRYPTION_KEY` et `SESSION_SECRET` : les changer pourrait rendre des données existantes illisibles ou invalider des sessions. Prévoir une sauvegarde restaurable de Neon et des clés ; conserver Vercel Blob lié. Le déploiement ne prouve pas à lui seul la délivrabilité e-mail, l’installation sur iPhone ou le bon fonctionnement du stockage QR sur Blob.
 

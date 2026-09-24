@@ -1,6 +1,6 @@
 # Livraison du portail marchand — sans API de paiement ni de messagerie
 
-**État au 24 septembre 2026 : code local testé, non publié.** Le 404 de `/api/merchant/countries` sur `kouturepro.vercel.app` signifie que le nouveau code serveur n’est pas déployé ; ce n’est **pas** une clé API externe à ajouter. Les paiements sont déclarés/confirmés manuellement et les messages WhatsApp/SMS sont partagés manuellement. L’inscription, les commandes et les liens de paiement ont été testés avec toutes les clés externes vides.
+**État au 24 septembre 2026, 11 h 45 UTC : code publié sur le site existant.** Le 404 de `/api/merchant/countries` constaté avant déploiement a disparu : l’endpoint renvoie désormais **200 JSON** avec 16 pays. Ce n’était **pas** une clé API externe à ajouter. Les paiements sont déclarés/confirmés manuellement et les messages WhatsApp/SMS sont partagés manuellement. L’inscription, les commandes et les liens de paiement ont été testés sans clés externes **en local**, pas avec un compte fictif Production.
 
 ## Contenu du paquet `kouturepro-marchands-release.zip`
 
@@ -20,4 +20,4 @@ Sans expéditeur configuré, **seul le mot de passe oublié par e-mail est désa
 
 ## Limites restantes
 
-Le stockage Vercel Blob réel, l’envoi réel de l’e-mail et l’installation sur un iPhone physique ne sont pas validés. Le parcours de suppression des données du compte marchand n’est pas terminé. Les anciennes commandes d’atelier restent dans leur espace existant, sans migration destructive vers les tables marchandes. **Ne pas présenter le paquet comme un déploiement achevé.**
+Le stockage Vercel Blob réel, l’envoi réel de l’e-mail et l’installation sur un iPhone physique ne sont pas validés. Le parcours de suppression des données du compte marchand n’est pas terminé. Les anciennes commandes d’atelier restent dans leur espace existant, sans migration destructive vers les tables marchandes. **Le déploiement est achevé, mais la validation fonctionnelle réelle reste partielle.**

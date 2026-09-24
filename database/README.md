@@ -1,6 +1,6 @@
 # Schémas KouturePro dans la base Neon existante
 
-**Situation au 24 septembre 2026 :** `kouturepro.vercel.app` utilise déjà Neon et l’espace atelier existant. Les nouvelles tables marchandes et le schéma `merchant_auth` ne sont **pas encore déployés ni validés sur Neon Production**. Le fait que `/api/health` réponde `database=ready` ne valide pas leur présence : `/api/merchant/countries` renvoie encore 404 sur le site en ligne.
+**Situation au 24 septembre 2026, 11 h 45 UTC :** la version marchande a été déployée sur la **base Neon existante** via le projet Vercel existant. `/api/health` répond `database=ready` et `/api/merchant/countries` renvoie **200 JSON** avec 16 pays, ce qui confirme au moins la disponibilité des nouvelles tables de pays. Un accès à un vrai compte marchand et l’intégrité de toutes les commandes privées n’ont **pas** été contrôlés depuis cette session. Ne pas rejouer le SQL d’initialisation directement sur Production.
 
 ## Déploiement de la nouvelle version
 

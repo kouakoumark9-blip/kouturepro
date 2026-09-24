@@ -1,8 +1,8 @@
 # Mettre KouturePro Marchands en ligne sur le site existant
 
-**Situation au 24 septembre 2026 :** `https://kouturepro.vercel.app` héberge déjà l’ancien espace atelier. `/api/health` y répond `database=ready`, mais **`/api/merchant/countries` répond 404** et `/marchands.webmanifest` renvoie du HTML. Les nouvelles fonctions marchandes sont testées localement, **pas encore déployées**. Voir [la validation](../VALIDATION_MARCHANDS.md).
+**Situation au 24 septembre 2026, 11 h 45 UTC :** le portail marchand est déployé sur le projet Vercel **existant** `https://kouturepro.vercel.app` après fusion de la [PR #1](https://github.com/kouakoumark9-blip/kouturepro/pull/1). `/api/health` y répond `database=ready`, `/api/merchant/countries` **200 JSON** avec 16 pays et `/marchands.webmanifest` retourne bien un manifest. Avant publication, la route marchande répondait 404 : c’était l’absence de **notre code serveur**, pas une API externe manquante. Voir [les vérifications et limites](../VALIDATION_MARCHANDS.md).
 
-> Le 404 est une **route de notre propre serveur absente du déploiement**, pas une clé API extérieure à fournir. Aucun identifiant CinetPay, Twilio ou WhatsApp Business n’est nécessaire. Les paiements et messages du portail marchand sont manuels. Seul l’envoi *automatique* du courriel de mot de passe oublié nécessite un service d’e-mail configuré.
+> Pour les prochains déploiements, conserver la même base Neon Production et une sauvegarde restaurable. Aucun identifiant CinetPay, Twilio ou WhatsApp Business n’est nécessaire : paiements et messages marchands sont manuels. Seul l’envoi *automatique* du courriel de mot de passe oublié nécessite un service d’e-mail configuré.
 
 ## 1. Mettre le code dans le dépôt GitHub existant
 

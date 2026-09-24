@@ -14,7 +14,8 @@
     "verify:blob": "node scripts/verify-blob.mjs",
     "db:sql": "node scripts/generer-sql-neon.mjs",
     "test:dashboard": "node tests/dashboard.e2e.mjs",
-    "test:modules": "node tests/modules.e2e.mjs"
+    "test:modules": "node tests/modules.e2e.mjs",
+    "test:responsive": "node tests/responsive.e2e.mjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

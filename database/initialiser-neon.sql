@@ -108,6 +108,95 @@ CREATE TABLE IF NOT EXISTS uploaded_images (
 CREATE TABLE IF NOT EXISTS rate_limits (
  id TEXT PRIMARY KEY, started BIGINT NOT NULL, hits INTEGER NOT NULL DEFAULT 0
 );
+-- Shared country/operator configuration. These are initial data, not JS runtime
+-- constants; the owner may choose providers and the catalogue can be edited.
+CREATE TABLE IF NOT EXISTS mp_countries (
+ code TEXT PRIMARY KEY, name_fr TEXT NOT NULL, name_en TEXT NOT NULL,
+ flag TEXT NOT NULL, dial_code TEXT NOT NULL, currency TEXT NOT NULL,
+ decimals INTEGER NOT NULL DEFAULT 2, active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS mp_operators (
+ code TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'mobile_money'
+);
+CREATE TABLE IF NOT EXISTS mp_country_operators (
+ country_code TEXT NOT NULL REFERENCES mp_countries(code),
+ operator_code TEXT NOT NULL REFERENCES mp_operators(code),
+ suggested INTEGER NOT NULL DEFAULT 1,
+ PRIMARY KEY(country_code,operator_code)
+);
+CREATE TABLE IF NOT EXISTS mp_merchant_profiles (
+ org_id TEXT PRIMARY KEY REFERENCES organizations(id),
+ country_code TEXT NOT NULL REFERENCES mp_countries(code),
+ locale TEXT NOT NULL DEFAULT 'fr', created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mp_memberships (
+ user_id TEXT NOT NULL, org_id TEXT NOT NULL REFERENCES organizations(id),
+ role TEXT NOT NULL DEFAULT 'personnel', active INTEGER NOT NULL DEFAULT 1,
+ email TEXT NOT NULL DEFAULT '', joined_at TEXT NOT NULL, PRIMARY KEY(user_id,org_id)
+);
+CREATE INDEX IF NOT EXISTS ix_mp_memberships_org ON mp_memberships(org_id,active);
+CREATE TABLE IF NOT EXISTS mp_clients (
+ id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+ name TEXT NOT NULL, phone_country TEXT NOT NULL REFERENCES mp_countries(code),
+ phone_encrypted TEXT NOT NULL, phone_lookup TEXT NOT NULL,
+ notes_encrypted TEXT NOT NULL DEFAULT '', consent INTEGER NOT NULL DEFAULT 0,
+ consent_at TEXT DEFAULT '', consent_revoked_at TEXT DEFAULT '',
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(org_id,id)
+);
+CREATE INDEX IF NOT EXISTS ix_mp_clients_org_name ON mp_clients(org_id,name);
+CREATE INDEX IF NOT EXISTS ix_mp_clients_org_phone ON mp_clients(org_id,phone_lookup);
+CREATE TABLE IF NOT EXISTS mp_orders (
+ id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+ client_id TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+ amount_minor BIGINT NOT NULL, currency TEXT NOT NULL, country_code TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending', created_by TEXT NOT NULL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(org_id,id),
+ FOREIGN KEY(org_id,client_id) REFERENCES mp_clients(org_id,id)
+);
+CREATE INDEX IF NOT EXISTS ix_mp_orders_org_status ON mp_orders(org_id,status,created_at);
+CREATE TABLE IF NOT EXISTS mp_payment_settings (
+ id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+ operator_code TEXT NOT NULL REFERENCES mp_operators(code),
+ enabled INTEGER NOT NULL DEFAULT 0, destination_encrypted TEXT NOT NULL DEFAULT '',
+ destination_country TEXT DEFAULT NULL REFERENCES mp_countries(code),
+ bank_encrypted TEXT NOT NULL DEFAULT '', qr_url TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL, UNIQUE(org_id,operator_code)
+);
+CREATE TABLE IF NOT EXISTS mp_payment_links (
+ id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+ order_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+ expires_at TEXT NOT NULL, revoked_at TEXT DEFAULT '', created_at TEXT NOT NULL,
+ UNIQUE(org_id,id,order_id),
+ FOREIGN KEY(org_id,order_id) REFERENCES mp_orders(org_id,id)
+);
+CREATE INDEX IF NOT EXISTS ix_mp_links_order ON mp_payment_links(org_id,order_id);
+CREATE TABLE IF NOT EXISTS mp_payment_claims (
+ id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+ order_id TEXT NOT NULL, link_id TEXT NOT NULL, reference TEXT NOT NULL,
+ submitted_at TEXT NOT NULL,
+ FOREIGN KEY(org_id,link_id,order_id) REFERENCES mp_payment_links(org_id,id,order_id)
+);
+CREATE TABLE IF NOT EXISTS mp_payment_events (
+ id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+ order_id TEXT NOT NULL, action TEXT NOT NULL, actor_id TEXT DEFAULT '',
+ actor_name TEXT NOT NULL, reference TEXT NOT NULL DEFAULT '',
+ previous_status TEXT NOT NULL, new_status TEXT NOT NULL, created_at TEXT NOT NULL,
+ FOREIGN KEY(org_id,order_id) REFERENCES mp_orders(org_id,id)
+);
+CREATE INDEX IF NOT EXISTS ix_mp_events_order ON mp_payment_events(org_id,order_id,created_at);
+CREATE TABLE IF NOT EXISTS mp_message_templates (
+ org_id TEXT NOT NULL REFERENCES organizations(id), locale TEXT NOT NULL,
+ kind TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL,
+ PRIMARY KEY(org_id,locale,kind)
+);
+CREATE TABLE IF NOT EXISTS mp_invitations (
+ id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+ email TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL,
+ expires_at TEXT NOT NULL, used_at TEXT DEFAULT '', revoked_at TEXT DEFAULT '',
+ created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS ix_clients_org ON clients(org_id);
 CREATE INDEX IF NOT EXISTS ix_orders_org_due ON orders(org_id,due_date);
 CREATE INDEX IF NOT EXISTS ix_payments_org ON payments(org_id);
@@ -117,9 +206,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
 CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users(email);
+ALTER TABLE mp_memberships ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+ALTER TABLE mp_payment_settings ADD COLUMN IF NOT EXISTS destination_country TEXT DEFAULT NULL REFERENCES mp_countries(code);
 COMMIT;
 
--- Contrôle sans modification : 21 tables attendues, aucune donnée fictive importée.
+-- Contrôle sans modification : 34 tables attendues, aucune donnée fictive importée.
 SELECT current_database() AS base, COUNT(*) AS tables_kouturepro
   FROM information_schema.tables
   WHERE table_schema = 'kouturepro' AND table_type = 'BASE TABLE';

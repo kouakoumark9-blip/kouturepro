@@ -8,6 +8,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { db, hostedDb, uuid, iso, encrypt, decryptBuffer, encryptBuffer, sessionKey, clientOut, measurementOut, orgOut, orgRow, orgBySlug, list } from './db.js';
+import {mountMerchantAuth,merchantSession,resetAvailable} from './merchant-auth.js';
+import {publicCountryConfiguration} from './merchant-countries.js';
+import {mountMerchantApi} from './merchant-api.js';
+import {parsePhoneNumberFromString} from 'libphonenumber-js';
 
 const app = express();
 if (process.env.RENDER === 'true' || process.env.VERCEL === '1') app.set('trust proxy', 1);
@@ -28,15 +32,22 @@ if(!hostedDb){
  app.use('/uploads',express.static(publicUploadsDir,{maxAge:'1d',immutable:true}));
 }
 app.disable('x-powered-by');
-app.use(express.json({limit:'1mb'}));
-app.use(express.urlencoded({extended:false,limit:'100kb'}));
-app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');next();});
+app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');
+ if(req.path.startsWith('/pay/')||req.path==='/marchands'||req.path.startsWith('/marchands/')||
+    (req.path.startsWith('/api/merchant/')&&req.path!=='/api/merchant/countries')||req.path.startsWith('/api/m-auth/')){
+  res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Robots-Tag','noindex, nofollow');
+ }else res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');next();});
 // Same-site cookie sessions plus a non-simple request header block cross-site form CSRF.
+// It also protects Better Auth, which must be mounted before body parsers.
 app.use('/api',(req,res,next)=>{
  if(['POST','PATCH','PUT','DELETE'].includes(req.method)&&req.path!=='/webhooks/cinetpay'&&req.get('X-Requested-With')!=='KouturePro')
   return res.status(403).json({error:'Requête non autorisée. Actualisez la page et réessayez.'});
  next();
 });
+// Better Auth must read the raw request stream before Express body parsers.
+await mountMerchantAuth(app);
+app.use(express.json({limit:'1mb'}));
+app.use(express.urlencoded({extended:false,limit:'100kb'}));
 
 const err=(status,message,extra={})=>Object.assign(new Error(message),{status,...extra});
 const api=(fn)=>(req,res,next)=>Promise.resolve().then(()=>fn(req,res)).catch(next);
@@ -46,6 +57,15 @@ const money=(n)=>new Intl.NumberFormat('fr-FR').format(Number(n)||0)+' FCFA';
 const validDate=(v)=>/^\d{4}-\d{2}-\d{2}$/.test(String(v||'')) && !Number.isNaN(Date.parse(v+'T00:00:00Z'));
 const requireField=(v,label)=>{ if(!text(v))throw err(400,`${label} est obligatoire.`); };
 const normalizePhone=(phone)=>{ const p=String(phone||'').replace(/[\s.()\-]/g,''); if(!/^\+?[0-9]{8,15}$/.test(p)) throw err(400,'Saisissez un numéro de téléphone valide.');return p.startsWith('+')?p:'+'+p; };
+// New merchant flows never guess a dialling prefix. The selected merchant
+// country (or the client's explicit country) is required for national numbers.
+function merchantPhone(phone,countryCode){
+ const country=db.prepare('SELECT code FROM mp_countries WHERE code=? AND active=1').get(countryCode);
+ if(!country)throw err(400,'Choisissez un pays disponible.');
+ const parsed=parsePhoneNumberFromString(String(phone||'').trim(),country.code);
+ if(!parsed?.isValid())throw err(400,'Numéro invalide pour ce pays. Vérifiez l’indicatif et le numéro.');
+ return parsed.number;
+}
 function cookie(req){const raw=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('kp_session='));return raw?decodeURIComponent(raw.split('=').slice(1).join('=')):'';}
 function setSession(res,user){const token=jwt.sign({sub:user.id,v:2,av:user.auth_version},sessionKey,{expiresIn:'30d'});res.cookie('kp_session',token,{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',maxAge:30*86400*1000,path:'/'});}
 function getUser(req){
@@ -112,6 +132,63 @@ function resetLimit(map,key){
  else map.delete(key);
 }
 const dummyHash=bcrypt.hashSync('not-a-real-password',10);
+app.get('/api/merchant/countries',api((req,res)=>{
+ res.set('Cache-Control','public, max-age=120');
+ res.json({countries:publicCountryConfiguration(db),reset_email_available:resetAvailable});
+}));
+async function merchantGuard(req,res,next){
+ try{req.merchantAuthUser=await merchantSession(req);if(!req.merchantAuthUser)return next(err(401,'Connectez-vous pour accéder à votre espace marchand.'));next();}
+ catch(error){next(error);}
+}
+app.get('/api/merchant/me',merchantGuard,api((req,res)=>{
+ const user=db.prepare('SELECT id,org_id,name,email,phone,role,created_at FROM users WHERE id=?').get(req.merchantAuthUser.id);
+ const org=user?.org_id?orgRow(user.org_id):null;
+ const profile=org?db.prepare('SELECT country_code,locale FROM mp_merchant_profiles WHERE org_id=?').get(org.id):null;
+ res.json({auth_user:{id:req.merchantAuthUser.id,name:req.merchantAuthUser.name,email:req.merchantAuthUser.email},
+  member:user||null,merchant:org&&profile?{id:org.id,name:org.name,country_code:profile.country_code,locale:profile.locale}:null});
+}));
+app.post('/api/merchant/register',merchantGuard,api((req,res)=>{
+ const business=text(req.body?.business_name,100),countryCode=text(req.body?.country_code,2).toUpperCase();
+ const locale=req.body?.locale==='en'?'en':'fr',country=db.prepare('SELECT code FROM mp_countries WHERE code=? AND active=1').get(countryCode);
+ if(!country)throw err(400,'Choisissez un pays disponible.');
+ if(business.length<2)throw err(400,'Saisissez le nom de votre entreprise.');
+ const number=merchantPhone(req.body?.phone,countryCode);
+ const parsed=parsePhoneNumberFromString(number);
+ if(parsed.country!==countryCode)throw err(400,'Choisissez l’indicatif correspondant au numéro de votre entreprise.');
+ const id=req.merchantAuthUser.id,email=req.merchantAuthUser.email.toLowerCase(),displayName=req.merchantAuthUser.name;
+ const taken=db.prepare('SELECT id FROM users WHERE phone=? AND id<>?').get(number,id);
+ if(taken)throw err(409,'Ce numéro est déjà associé à un autre compte. Choisissez un autre numéro professionnel.');
+ const current=db.prepare('SELECT * FROM users WHERE id=?').get(id);
+ if(current&&current.role!=='owner')throw err(403,'Seul le propriétaire peut enregistrer une entreprise.');
+ if(current?.org_id){
+  const existing=db.prepare('SELECT * FROM mp_merchant_profiles WHERE org_id=?').get(current.org_id);
+  if(existing){db.prepare('INSERT OR IGNORE INTO mp_memberships(user_id,org_id,role,email,joined_at) VALUES (?,?,?,?,?)').run(id,current.org_id,'marchand',email,iso());
+   return res.status(200).json({merchant:{id:current.org_id,name:orgRow(current.org_id).name,country_code:existing.country_code,locale:existing.locale}});}
+ }
+ const conflicting=db.prepare('SELECT id FROM users WHERE lower(email)=? AND id<>?').get(email,id);
+ if(conflicting)throw err(409,'Cet e-mail appartient à un autre compte. Contactez le support avant de continuer.');
+ let slug=business.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,72);
+ if(slug.length<3)slug='boutique-'+crypto.randomInt(1000,9999);
+ const base=slug;let n=2;while(orgBySlug(slug))slug=base+'-'+n++;
+ const orgId=current?.org_id||uuid(),branch=uuid(),now=iso();
+ transaction(()=>{
+  if(!current?.org_id){
+   db.prepare('INSERT INTO organizations (id,slug,name,city,whatsapp_phone,specialties,plan,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(orgId,slug,business,text(req.body?.city,80),number,'[]','starter',now);
+   db.prepare('INSERT INTO branches (id,org_id,name,city,phone,is_primary,created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(branch,orgId,business,text(req.body?.city,80),number,1,now);
+  }
+  if(!current)db.prepare('INSERT INTO users (id,org_id,branch_id,name,email,phone,role,created_at) VALUES (?,?,?,?,?,?,?,?)')
+   .run(id,orgId,branch,displayName,email,number,'owner',now);
+  db.prepare('INSERT OR IGNORE INTO mp_merchant_profiles (org_id,country_code,locale,created_at) VALUES (?,?,?,?)')
+   .run(orgId,countryCode,locale,now);
+  db.prepare('INSERT OR IGNORE INTO mp_memberships(user_id,org_id,role,email,joined_at) VALUES (?,?,?,?,?)')
+   .run(id,orgId,'marchand',email,now);
+ });
+ const profile=db.prepare('SELECT country_code,locale FROM mp_merchant_profiles WHERE org_id=?').get(orgId);
+ res.status(201).json({merchant:{id:orgId,name:orgRow(orgId).name,country_code:profile.country_code,locale:profile.locale}});
+}));
+mountMerchantApi(app,{baseUrl});
 app.post('/api/auth/signup',api((req,res)=>{
  limit(signupAttempts,req.ip,25,60*60*1000);
  const name=text(req.body?.name,80),{kind,value}=loginIdentifier(req.body?.identifier),password=checkPassword(req.body?.password);
@@ -168,7 +245,7 @@ app.get('/api/bootstrap',auth,withOrg,api((req,res)=>{
  res.json({user:userOut(req.user),organization:orgOut(req.org),branches:list('branches',orgId),clients,measurements:list('measurements',orgId).filter(x=>clientIds.has(x.client_id)).map(measurementOut),orders,
  payments:canSeePayments?list('payments',orgId).filter(x=>orderIds.has(x.order_id)):[],fabrics,suppliers:list('suppliers',orgId),expenses,team:list('users',orgId).map(userOut),patterns:list('patterns',orgId),
  showcase:list('showcase_items',orgId),reviews:list('reviews',orgId),appointments:apprentice?[]:list('appointments',orgId),savingsPlans:canSeePayments?list('savings_plans',orgId):[],savingsContributions:canSeePayments?list('savings_contributions',orgId):[],
- integration:{mobile:!!(process.env.CINETPAY_API_KEY&&process.env.CINETPAY_SITE_ID&&baseUrl),sms:!!(process.env.TWILIO_ACCOUNT_SID&&process.env.TWILIO_AUTH_TOKEN&&process.env.TWILIO_FROM),whatsapp:!!(process.env.WHATSAPP_ACCESS_TOKEN&&process.env.WHATSAPP_PHONE_ID&&process.env.WHATSAPP_TEMPLATE_NAME)}});
+ integration:{mobile:false,sms:false,whatsapp:false}});
 }));
 
 app.post('/api/clients',auth,withOrg,roles('owner','tailor','accountant'),api((req,res)=>{
@@ -284,46 +361,20 @@ app.post('/api/payments',auth,withOrg,roles('owner','accountant'),api((req,res)=
  const when=iso();db.prepare('INSERT INTO payments (id,org_id,order_id,amount,method,status,created_at,confirmed_at) VALUES (?,?,?,?,?,?,?,?)').run(id,req.user.org_id,order.id,amount,method,'paid',when,when);
  res.status(201).json({item:row(req,'payments',id)});
 }));
-async function cinetpayVerify(transactionId){
- const r=await fetch('https://api-checkout.cinetpay.com/v2/payment/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apikey:process.env.CINETPAY_API_KEY,site_id:process.env.CINETPAY_SITE_ID,transaction_id:transactionId}),signal:AbortSignal.timeout(12000)});
- if(!r.ok)throw err(502,'La vérification du paiement est momentanément indisponible.');return r.json();
-}
-async function confirmPayment(payment){
- if(payment.status==='paid')return payment;
- const result=await cinetpayVerify(payment.transaction_id),data=result.data||{};
- if(String(result.code)==='00'&&data.status==='ACCEPTED'&&Number(data.amount)===payment.amount&&data.currency==='XOF'){
-  db.prepare("UPDATE payments SET status='paid',confirmed_at=? WHERE id=? AND status='pending'").run(iso(),payment.id);
- }else if(['REFUSED','CANCELLED','CANCELED'].includes(data.status)){
-  db.prepare("UPDATE payments SET status='failed' WHERE id=? AND status='pending'").run(payment.id);
- }
- return db.prepare('SELECT * FROM payments WHERE id=?').get(payment.id);
-}
-app.post('/api/payments/mobile',auth,withOrg,roles('owner','accountant'),api(async(req,res)=>{
- if(!process.env.CINETPAY_API_KEY||!process.env.CINETPAY_SITE_ID||!baseUrl)throw err(503,'Le paiement mobile n’est pas encore activé. Configurez CinetPay et une adresse publique dans les paramètres du serveur.');
- const order=row(req,'orders',req.body.order_id),provider=text(req.body.provider,30);
- if(!['Wave','Orange Money','MTN Money'].includes(provider))throw err(400,'Choisissez un opérateur mobile.');
- const amount=Math.round(Number(req.body.amount));const already=db.prepare("SELECT COALESCE(SUM(amount),0) total FROM payments WHERE order_id=? AND status='paid'").get(order.id).total;
- if(!Number.isInteger(amount)||amount<100||amount%5!==0||amount>order.price-already)throw err(400,'Montant invalide (minimum 100 FCFA, multiple de 5, limité au solde).');
- const id=uuid(),transactionId='KP'+Date.now()+crypto.randomInt(10000,99999),client=row(req,'clients',order.client_id);
- const body={apikey:process.env.CINETPAY_API_KEY,site_id:process.env.CINETPAY_SITE_ID,transaction_id:transactionId,amount,currency:'XOF',description:'Commande '+order.reference,
- notify_url:baseUrl+'/api/webhooks/cinetpay',return_url:baseUrl+'/app/orders/'+order.id+'?paiement=retour',channels:'MOBILE_MONEY',lang:'fr',customer_name:client.name,metadata:order.id};
- let result;try{const r=await fetch('https://api-checkout.cinetpay.com/v2/payment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(12000)});result=await r.json();if(!r.ok)throw Error(result.message||'HTTP '+r.status);}catch(e){throw err(502,'Le service de paiement ne répond pas. Réessayez dans un instant.');}
- if(String(result.code)!=='201'||!result.data?.payment_url)throw err(502,result.description||result.message||'Impossible de créer le paiement.');
- db.prepare('INSERT INTO payments (id,org_id,order_id,amount,method,provider,status,transaction_id,payment_url,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(id,req.user.org_id,order.id,amount,'Mobile money',provider,'pending',transactionId,result.data.payment_url,iso());
- res.status(201).json({payment:row(req,'payments',id),payment_url:result.data.payment_url,note:'L’opérateur disponible dépend de votre contrat CinetPay.'});
+// Historical paid/pending payment rows are preserved, but the former payment
+// gateway is deliberately inert. Only merchant-declared manual payments are
+// available for new orders; do not call CinetPay even if legacy keys are set.
+app.post('/api/payments/mobile',auth,withOrg,roles('owner','accountant'),api((req,res)=>{
+ row(req,'orders',req.body.order_id);
+ throw err(503,'Les paiements automatiques ont été désactivés. Utilisez les liens de paiement manuel dans l’espace marchand.');
 }));
-app.post('/api/payments/:id/refresh',auth,withOrg,roles('owner','accountant'),api(async(req,res)=>{
- const p=row(req,'payments',req.params.id);if(p.method!=='Mobile money')throw err(400,'Ce paiement ne nécessite pas de vérification.');
- res.json({item:await confirmPayment(p)});
+app.post('/api/payments/:id/refresh',auth,withOrg,roles('owner','accountant'),api((req,res)=>{
+ const payment=row(req,'payments',req.params.id);
+ if(payment.method!=='Mobile money')throw err(400,'Ce paiement ne nécessite pas de vérification.');
+ throw err(503,'Vérification automatique indisponible. Contactez le support pour les anciens paiements en attente.');
 }));
-app.all('/api/webhooks/cinetpay',api(async(req,res)=>{
- if(req.method==='GET')return res.status(200).send('OK');
- const transId=text(req.body.cpm_trans_id||req.body.transaction_id,100);
- if(!transId||String(req.body.cpm_site_id||'')!==String(process.env.CINETPAY_SITE_ID||''))return res.status(200).send('OK');
- const p=db.prepare("SELECT * FROM payments WHERE transaction_id=? AND status='pending'").get(transId);
- if(p){try{await confirmPayment(p);}catch(e){console.error('CinetPay verification:',e.message);return res.status(503).send('retry');}}
- res.status(200).send('OK');
-}));
+// Acknowledge legacy webhook retries without changing a recorded transaction.
+app.all('/api/webhooks/cinetpay',(req,res)=>res.status(200).send('OK'));
 
 function renderInvoice(res,order,client,org,payments){
  const paid=payments.reduce((a,p)=>a+p.amount,0);const doc=new PDFDocument({size:'A4',margin:56});
@@ -365,16 +416,11 @@ app.post('/api/orders/:id/invoice/share',auth,withOrg,roles('owner','accountant'
  const order=row(req,'orders',req.params.id);
  res.json({url:shareInvoiceLink(req,order),expires_at:new Date(Date.now()+7*864e5).toISOString()});
 }));
-app.post('/api/orders/:id/invoice/whatsapp',auth,withOrg,roles('owner','accountant','tailor'),api(async(req,res)=>{
- const order=row(req,'orders',req.params.id),client=clientOut(row(req,'clients',order.client_id));
- if(!client.phone)throw err(400,'Le client n’a pas de numéro de téléphone.');
- if(!process.env.WHATSAPP_ACCESS_TOKEN||!process.env.WHATSAPP_PHONE_ID)throw err(503,"L’envoi WhatsApp intégré n’est pas configuré.");
- const link=shareInvoiceLink(req,order);
- const body={messaging_product:'whatsapp',to:client.phone.replace(/\D/g,''),type:'document',document:{link,filename:`Facture-${order.reference}.pdf`}};
- const r=await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(process.env.WHATSAPP_PHONE_ID)}/messages`,{method:'POST',headers:{Authorization:'Bearer '+process.env.WHATSAPP_ACCESS_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(12000)});
- if(!r.ok)throw err(502,"Le document n’a pas pu être envoyé. Une conversation WhatsApp active avec le client peut être nécessaire. Utilisez le lien à partager.");
- res.json({ok:true});
+app.post('/api/orders/:id/invoice/whatsapp',auth,withOrg,roles('owner','accountant','tailor'),api((req,res)=>{
+ row(req,'orders',req.params.id);
+ throw err(503,'L’envoi automatique WhatsApp est désactivé. Créez un lien de facture et partagez-le manuellement avec l’accord du client.');
 }));
+
 app.get('/receipt/:token',api((req,res)=>{
  if(req.params.token.length>1800)throw err(404,'Ce lien de facture est invalide.');
  let payload;try{payload=jwt.verify(req.params.token,sessionKey);}catch{throw err(404,'Ce lien de facture est expiré ou invalide.');}
@@ -467,68 +513,16 @@ app.post('/api/reviews',auth,withOrg,roles('owner'),api((req,res)=>{
 }));
 app.patch('/api/appointments/:id',auth,withOrg,roles('owner','tailor'),api((req,res)=>{row(req,'appointments',req.params.id);const status=text(req.body.status,20);if(!['new','contacted','done'].includes(status))throw err(400,'Statut invalide.');db.prepare('UPDATE appointments SET status=? WHERE id=? AND org_id=?').run(status,req.params.id,req.user.org_id);res.json({item:row(req,'appointments',req.params.id)});}));
 
-async function sendSms(to,message){
- const {TWILIO_ACCOUNT_SID:sid,TWILIO_AUTH_TOKEN:token,TWILIO_FROM:from}=process.env;
- if(!sid||!token||!from)throw err(503,"L'envoi SMS n'est pas configuré.");
- const body=new URLSearchParams({To:to,From:from,Body:message});const r=await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`,{method:'POST',headers:{Authorization:'Basic '+Buffer.from(sid+':'+token).toString('base64'),'Content-Type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(12000)});
- if(!r.ok)throw err(502,"Le SMS n'a pas pu être envoyé.");return r.json();
-}
-async function sendWhatsapp(to,kind,clientName,date){
- const {WHATSAPP_ACCESS_TOKEN:token,WHATSAPP_PHONE_ID:phoneId,WHATSAPP_TEMPLATE_NAME:template}=process.env;
- if(!token||!phoneId||!template)throw err(503,"L'envoi WhatsApp n'est pas configuré.");
- // A Meta-approved template with 3 body variables: client name, reminder type, date.
- const body={messaging_product:'whatsapp',to:to.replace(/\D/g,''),type:'template',template:{name:template,language:{code:'fr'},components:[{type:'body',parameters:[{type:'text',text:clientName},{type:'text',text:kind},{type:'text',text:date}]}]}};
- const r=await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(phoneId)}/messages`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(12000)});
- if(!r.ok)throw err(502,"Le message WhatsApp n'a pas pu être envoyé. Vérifiez votre modèle approuvé.");return r.json();
-}
-app.post('/api/communications/send',auth,withOrg,roles('owner','tailor','accountant'),api(async(req,res)=>{
- const order=row(req,'orders',req.body.order_id),client=clientOut(row(req,'clients',order.client_id));if(!client.phone)throw err(400,'Ajoutez un numéro de téléphone à la fiche client.');
- const channel=text(req.body.channel,20),kind=text(req.body.kind,60)||'votre commande',date=order.due_date;
- if(channel==='sms')await sendSms(client.phone,`Bonjour ${client.name}, rappel ${kind} pour votre commande ${order.reference} à ${req.org.name}. Date : ${date}. Contact : ${req.org.whatsapp_phone}`);
- else if(channel==='whatsapp')await sendWhatsapp(client.phone,kind,client.name,date);
- else throw err(400,'Canal inconnu.');res.json({ok:true});
+// Keep legacy routes and data, but never send SMS or WhatsApp through an API.
+app.post('/api/communications/send',auth,withOrg,roles('owner','tailor','accountant'),api((req,res)=>{
+ row(req,'orders',req.body.order_id);
+ throw err(503,'L’envoi automatique est désactivé. Contactez votre client manuellement, avec son accord.');
 }));
-// Scheduled reminders: enabled opt-in only. Failures do not create a log, so the next run can retry.
-async function runReminders(){
- const today=new Date().toISOString().slice(0,10),tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
- const enabled=db.prepare('SELECT * FROM organizations WHERE is_demo=0 AND (reminders_sms=1 OR reminders_whatsapp=1)').all();
- for(const org of enabled){
-  const due=db.prepare("SELECT o.*,c.name client_name,c.phone_encrypted FROM orders o JOIN clients c ON c.id=o.client_id WHERE o.org_id=? AND o.status='active' AND (o.due_date=? OR o.fitting_date=?) LIMIT 100").all(org.id,tomorrow,tomorrow);
-  for(const order of due){const phone=clientOut(order).phone;if(!phone)continue;
-   for(const channel of ['sms','whatsapp']){if(channel==='sms'&&!org.reminders_sms||channel==='whatsapp'&&!org.reminders_whatsapp)continue;
-    const kind=order.fitting_date===tomorrow?'essayage':'retrait';if(db.prepare('SELECT id FROM reminder_log WHERE order_id=? AND channel=? AND kind=? AND date_key=?').get(order.id,channel,kind,today))continue;
-    try{if(channel==='sms')await sendSms(phone,`Bonjour ${order.client_name}, votre ${kind} à ${org.name} est prévu le ${tomorrow}. À bientôt !`);
-     else await sendWhatsapp(phone,kind,order.client_name,tomorrow);
-     db.prepare('INSERT OR IGNORE INTO reminder_log (id,org_id,order_id,channel,kind,date_key,sent_at) VALUES (?,?,?,?,?,?,?)').run(uuid(),org.id,order.id,channel,kind,today,iso());
-    }catch(e){console.error('Reminder delivery:',e.message);}
-   }
-  }
-  const unpaid=db.prepare(`SELECT o.*,c.name client_name,c.phone_encrypted,o.price-COALESCE(SUM(CASE WHEN p.status='paid' THEN p.amount ELSE 0 END),0) AS remaining
-   FROM orders o JOIN clients c ON c.id=o.client_id LEFT JOIN payments p ON p.order_id=o.id
-   WHERE o.org_id=? AND o.status='active' AND o.due_date<?
-   GROUP BY o.id,c.name,c.phone_encrypted HAVING o.price-COALESCE(SUM(CASE WHEN p.status='paid' THEN p.amount ELSE 0 END),0)>0 LIMIT 100`).all(org.id,today);
-  for(const order of unpaid){
-   const days=Math.round((Date.parse(today+'T00:00:00Z')-Date.parse(order.due_date+'T00:00:00Z'))/86400000);
-   if(![1,7,14].includes(days))continue;const phone=clientOut(order).phone;if(!phone)continue;
-   for(const channel of ['sms','whatsapp']){
-    if(channel==='sms'&&!org.reminders_sms||channel==='whatsapp'&&!org.reminders_whatsapp)continue;
-    if(db.prepare('SELECT id FROM reminder_log WHERE order_id=? AND channel=? AND kind=? AND date_key=?').get(order.id,channel,'paiement',today))continue;
-    try{
-     if(channel==='sms')await sendSms(phone,`Bonjour ${order.client_name}, le solde de votre commande ${order.reference} chez ${org.name} est de ${money(order.remaining)}. Contactez-nous pour organiser le règlement.`);
-     else await sendWhatsapp(phone,'rappel du paiement',order.client_name,today);
-     db.prepare('INSERT OR IGNORE INTO reminder_log (id,org_id,order_id,channel,kind,date_key,sent_at) VALUES (?,?,?,?,?,?,?)').run(uuid(),org.id,order.id,channel,'paiement',today,iso());
-    }catch(e){console.error('Payment reminder delivery:',e.message);}
-   }
-  }
- }
-}
-app.get('/api/cron/reminders',api(async(req,res)=>{
+app.get('/api/cron/reminders',api((req,res)=>{
  if(!process.env.CRON_SECRET||req.get('Authorization')!==`Bearer ${process.env.CRON_SECRET}`)throw err(401,'Accès refusé.');
- await runReminders();
  if(hostedDb)db.prepare('DELETE FROM rate_limits WHERE started<?').run(Date.now()-2*864e5);
- res.json({ok:true});
+ res.json({ok:true,messaging:'disabled'});
 }));
-if(!hostedDb)setInterval(()=>runReminders().catch(e=>console.error(e)),60*60*1000).unref();
 
 function publicData(org){const {slug,name,description,address,city,neighborhood,whatsapp_phone,logo_url,cover_url,currency}=org;return {organization:{slug,name,description,address,city,neighborhood,whatsapp_phone,logo_url,cover_url,currency,specialties:JSON.parse(org.specialties||'[]')},showcase:list('showcase_items',org.id),reviews:list('reviews',org.id),branches:list('branches',org.id).map(({name,address,city,phone})=>({name,address,city,phone}))};}
 app.get('/api/public/:slug',api((req,res)=>{const org=orgBySlug(req.params.slug);if(!org)throw err(404,'Atelier introuvable.');res.json(publicData(org));}));
@@ -540,7 +534,7 @@ app.post('/api/public/:slug/appointments',api((req,res)=>{
  db.prepare('INSERT INTO appointments (id,org_id,name,phone,preferred_date,message,created_at) VALUES (?,?,?,?,?,?,?)').run(uuid(),org.id,name,phone,date,text(req.body.message,500),iso());res.status(201).json({ok:true,message:"Votre demande a été envoyée à l'atelier. Il vous recontactera pour confirmer le rendez-vous."});
 }));
 app.get('/sitemap.xml',api((req,res)=>{const url=baseUrl||`${req.protocol}://${req.get('host')}`;const orgs=db.prepare('SELECT slug FROM organizations WHERE is_demo=0').all();res.type('xml').send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+orgs.map(o=>`<url><loc>${url}/${encodeURIComponent(o.slug)}</loc></url>`).join('')+'</urlset>');}));
-app.get('/robots.txt',(req,res)=>res.type('text').send('User-agent: *\nDisallow: /app\nDisallow: /api\nDisallow: /auth\nSitemap: '+(baseUrl||`${req.protocol}://${req.get('host')}`)+'/sitemap.xml\n'));
+app.get('/robots.txt',(req,res)=>res.type('text').send('User-agent: *\nDisallow: /app\nDisallow: /api\nDisallow: /auth\nDisallow: /marchands\nDisallow: /pay\nSitemap: '+(baseUrl||`${req.protocol}://${req.get('host')}`)+'/sitemap.xml\n'));
 app.get('/api/health',(req,res)=>{
  try {
   db.prepare('SELECT COUNT(*) AS total FROM organizations').get();
@@ -559,8 +553,10 @@ app.use((error,req,res,next)=>{
 });
 
 function publicMedia(req,url){return new URL(url||'/assets/atelier-hero.jpg',baseUrl||`${req.protocol}://${req.get('host')}`).href;}
+function privatePage(pathname){return pathname==='/app'||pathname.startsWith('/app/')||pathname==='/auth'||pathname==='/onboarding'||pathname==='/marchands'||pathname.startsWith('/marchands/')||pathname==='/pay'||pathname.startsWith('/pay/');}
 function seoHead(req){
- const slug=decodeURIComponent(req.path.split('/')[1]||'');if(req.path.startsWith('/app')||req.path.startsWith('/auth')||req.path.startsWith('/onboarding'))return '<meta name="robots" content="noindex, nofollow">';
+ if(privatePage(req.path))return '<meta name="robots" content="noindex, nofollow">';
+ const slug=decodeURIComponent(req.path.split('/')[1]||'');
  const org=orgBySlug(slug);if(!org)return '';
  const {showcase,reviews}=publicData(org);const url=(baseUrl||`${req.protocol}://${req.get('host')}`)+'/'+encodeURIComponent(slug);
  const safe=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -575,7 +571,7 @@ function insertSeo(req,html){
  html=html.replace('</head>',head+'</head>');
  // Crawlable, useful HTML is available even to clients that don't execute JavaScript.
  // React replaces this same-content fallback when the interactive page loads.
- const slug=decodeURIComponent(req.path.split('/')[1]||''),org=orgBySlug(slug);
+ const slug=decodeURIComponent(req.path.split('/')[1]||''),org=privatePage(req.path)?null:orgBySlug(slug);
  if(org){
   const escape=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const gallery=list('showcase_items',org.id),reviews=list('reviews',org.id),phone=org.whatsapp_phone.replace(/\D/g,'');

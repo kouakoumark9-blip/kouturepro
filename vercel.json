@@ -17,6 +17,9 @@
     { "source": "/app/:path*", "destination": "/api/index?__kp_path=/app/:path*" },
     { "source": "/auth", "destination": "/api/index?__kp_path=/auth" },
     { "source": "/onboarding", "destination": "/api/index?__kp_path=/onboarding" },
+    { "source": "/marchands", "destination": "/api/index?__kp_path=/marchands" },
+    { "source": "/marchands/:path*", "destination": "/api/index?__kp_path=/marchands/:path*" },
+    { "source": "/pay/:path*", "destination": "/api/index?__kp_path=/pay/:path*" },
     { "source": "/:slug", "destination": "/api/index?__kp_path=/:slug" },
     { "source": "/", "destination": "/api/index?__kp_path=/" }
   ],

@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import schema, { postgresMigrations } from './schema.js';
+import {seedCountryConfiguration} from './merchant-countries.js';
 
 export const hostedDb = process.env.VERCEL === '1' || process.env.USE_POSTGRES === '1';
 const production = process.env.NODE_ENV === 'production';
@@ -90,7 +91,16 @@ if (hostedDb) {
     db.exec(schema);
     for (const statement of postgresMigrations) db.exec(statement);
   })();
-} else db.exec(schema);
+} else {
+  db.exec(schema);
+  // SQLite lacks ADD COLUMN IF NOT EXISTS. Only add fields; never rebuild
+  // merchant tables that may already contain live orders or invitations.
+  if (!db.pragma('table_info(mp_memberships)').some(c => c.name === 'email'))
+    db.exec("ALTER TABLE mp_memberships ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+  if (!db.pragma('table_info(mp_payment_settings)').some(c => c.name === 'destination_country'))
+    db.exec('ALTER TABLE mp_payment_settings ADD COLUMN destination_country TEXT DEFAULT NULL REFERENCES mp_countries(code)');
+}
+seedCountryConfiguration(db);
 
 // Existing OTP-era databases had a non-null phone and no password. Rebuild only
 // that table to allow email-only accounts while preserving staff/order references.
